@@ -132,6 +132,65 @@ describe('sqliteStore', () => {
     }, 30_000);
   });
 
+  describe('list', () => {
+    const seeded = (...names: string[]) => {
+      const store = mem();
+      for (const n of names) store.create(n);
+      return store;
+    };
+
+    it('returns an empty list when there are no counters', () => {
+      expect(mem().list(undefined, 100)).toEqual({ counters: [] });
+    });
+
+    it('returns counters sorted by name with their values', () => {
+      const store = seeded('coffee', 'bugs', 'standup');
+      store.increment('bugs', 3);
+      expect(store.list(undefined, 100)).toEqual({
+        counters: [
+          { name: 'bugs', value: 3 },
+          { name: 'coffee', value: 0 },
+          { name: 'standup', value: 0 },
+        ],
+      });
+    });
+
+    it('caps a page at the limit, sets next, and continues after it', () => {
+      const store = seeded('a', 'b', 'c', 'd', 'e');
+      const first = store.list(undefined, 2);
+      expect(first).toEqual({ counters: [{ name: 'a', value: 0 }, { name: 'b', value: 0 }], next: 'b' });
+      expect(store.list(first.next, 2)).toEqual({
+        counters: [{ name: 'c', value: 0 }, { name: 'd', value: 0 }],
+        next: 'd',
+      });
+      expect(store.list('d', 2)).toEqual({ counters: [{ name: 'e', value: 0 }] });
+    });
+
+    it('sets no next when the page is exactly full and nothing follows', () => {
+      expect(seeded('a', 'b').list(undefined, 2)).toEqual({
+        counters: [{ name: 'a', value: 0 }, { name: 'b', value: 0 }],
+      });
+    });
+
+    it('continues after a name that does not exist', () => {
+      expect(seeded('apple', 'cherry').list('banana', 10)).toEqual({ counters: [{ name: 'cherry', value: 0 }] });
+    });
+
+    it('walking every page returns every counter once', () => {
+      const names = Array.from({ length: 237 }, (_, i) => `c-${String(i).padStart(3, '0')}`);
+      const store = seeded(...[...names].reverse());
+      const seen: string[] = [];
+      let after: string | undefined;
+      for (let page = 0; page < 100; page++) {
+        const { counters, next } = store.list(after, 10);
+        seen.push(...counters.map((c) => c.name));
+        if (!next) break;
+        after = next;
+      }
+      expect(seen).toEqual(names);
+    });
+  });
+
   it('passes through an unexpected database error instead of reporting a duplicate', () => {
     const store = sqliteStore(':memory:');
     store.close();
