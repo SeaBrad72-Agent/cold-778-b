@@ -12,13 +12,26 @@ a shared counter it can bump from a script or a browser.
 
 ## Get started
 
+Needs Node.js 24 or later (it uses the built-in `node:sqlite`).
+
 ```
-# [the one command that gets a new contributor from clone to running]
+npm ci && npm run build && npm start
 ```
 
-[Prerequisites, environment variables (`.env.example`), and the first thing to try once it runs.
-`RUNBOOK.md` carries the full setup, deploy, troubleshoot and rollback detail — keep this section to
-the happy path.]
+Then, from another terminal:
+
+```
+curl -s -X POST localhost:3000/counters -H 'Content-Type: application/json' -d '{"name":"coffee-runs"}'
+curl -s localhost:3000/counters/coffee-runs
+```
+
+| Variable | Default | What it does |
+|---|---|---|
+| `PORT` | `3000` | The port to listen on. |
+| `TALLY_HOST` | `127.0.0.1` | The interface to listen on. The counter API has no login, so the default is this machine only; set `0.0.0.0` (for example in a container) to open it to the network on purpose. |
+| `TALLY_DB_PATH` | `./data/tally.db` | The SQLite file that holds the counters. Its folder is created if missing; `/data/` is gitignored. An empty value falls back to the default. |
+
+`RUNBOOK.md` carries the full setup, deploy, troubleshoot and rollback detail.
 
 ## How this project is run
 
