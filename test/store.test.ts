@@ -45,6 +45,19 @@ describe('sqliteStore', () => {
     expect(store.get('still-works')).toEqual({ name: 'still-works', value: 0 });
   });
 
+  it('passes through an unexpected database error instead of reporting a duplicate', () => {
+    const store = sqliteStore(':memory:');
+    store.close();
+    let thrown: unknown;
+    try {
+      store.create('after-close');
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBeInstanceOf(CounterExistsError);
+  });
+
   it('keeps counters across a restart on a file database', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tally-store-'));
     dirs.push(dir);
