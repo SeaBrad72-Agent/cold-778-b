@@ -83,3 +83,8 @@ Tests prove the contract in §2 against an in-memory database and a file databas
 ## Amendment log
 
 - 2026-11-17: initial design, GO'd by the owner.
+- 2026-11-17, review round 1 (no new mechanism, variable or gate; behaviour notes only):
+  - Request-side errors answer with a message that names the cause: `request body is not valid JSON`, `request body too large`, `unsupported content type or encoding` (415), or `bad request` (for example, a malformed percent-encoding in the URL). A 500 writes one `level: "error"` line with the cause to the server log, and never to the client.
+  - "Unchanged" for `/healthz`, `/metrics` and `/greeting` means the same responses at the same paths. Express routing also accepts a trailing slash, a query string and any letter case (`/HEALTHZ`), where the old exact match answered 404. This is accepted as harmless.
+  - The default `SERVICE_NAME` in log lines and spans is now `tally` (was `reference-app`).
+  - An empty `TALLY_DB_PATH` falls back to `./data/tally.db` instead of opening a temporary database.

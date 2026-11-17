@@ -77,6 +77,25 @@ describe('counters API', () => {
       expect(res.body).toEqual({ error: 'request body is not valid JSON' });
     });
 
+    it('answers 415 with a request-side message for an unsupported charset', async () => {
+      const res = await request(app)
+        .post('/counters')
+        .set('Content-Type', 'application/json; charset=latin1')
+        .send('{"name":"coffee"}');
+      expect(res.status).toBe(415);
+      expect(res.body).toEqual({ error: 'unsupported content type or encoding' });
+    });
+
+    it('answers 415 with a request-side message for an unsupported content encoding', async () => {
+      const res = await request(app)
+        .post('/counters')
+        .set('Content-Type', 'application/json')
+        .set('Content-Encoding', 'foo')
+        .send('{"name":"coffee"}');
+      expect(res.status).toBe(415);
+      expect(res.body).toEqual({ error: 'unsupported content type or encoding' });
+    });
+
     it('refuses a body over 1kb with 413', async () => {
       const res = await request(app)
         .post('/counters')
@@ -109,6 +128,12 @@ describe('counters API', () => {
         expect(typeof res.body.error).toBe('string');
       },
     );
+  });
+
+  it('answers a malformed percent-encoded name with a generic 400, not a body error', async () => {
+    const res = await request(app).get('/counters/%E0%A4%A');
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({ error: 'bad request' });
   });
 
   it('round-trips: a created counter reads back', async () => {

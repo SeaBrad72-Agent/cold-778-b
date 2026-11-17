@@ -81,12 +81,20 @@ function telemetry(metrics: Metrics): RequestHandler {
     const raw = req.get('x-request-id');
     const requestId = raw && /^[A-Za-z0-9._-]{1,128}$/.test(raw) ? raw : randomUUID();
     const path = req.originalUrl;
+    res.locals.requestId = requestId; // read by the error tail, so its ERROR line correlates
 
     res.set(SECURITY_HEADERS);
     res.on('finish', () => {
       const endMono = process.hrtime.bigint();
       const latencyMs = Math.round((Number(endMono - startMono) / 1e6) * 1000) / 1000;
-      log({ requestId, method: req.method, path, status: res.statusCode, latencyMs });
+      log({
+        level: res.statusCode >= 500 ? 'error' : 'info',
+        requestId,
+        method: req.method,
+        path,
+        status: res.statusCode,
+        latencyMs,
+      });
       metrics.record(req.method, res.statusCode, latencyMs);
       emitSpan({
         trace_id: randomBytes(16).toString('hex'),
@@ -107,14 +115,32 @@ function telemetry(metrics: Metrics): RequestHandler {
   };
 }
 
-// The JSON error tail. A body-parser error carries its own 4xx status (400 bad JSON, 413 too large);
-// anything else is a 500 whose detail is never sent to the client.
+// The JSON error tail. A request-side error (body-parser, router) carries its own 4xx status; its
+// message is chosen from what went wrong, and says nothing about the server. Anything else is a 500:
+// the client gets no detail, and the cause goes to the server log as one ERROR line.
+function clientMessage(status: number, type: unknown): string {
+  if (type === 'entity.parse.failed') return 'request body is not valid JSON';
+  if (type === 'entity.too.large' || status === 413) return 'request body too large';
+  if (status === 415) return 'unsupported content type or encoding';
+  return 'bad request';
+}
+
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   void _next;
   const status = typeof err?.status === 'number' && err.status >= 400 && err.status < 500 ? err.status : 500;
-  const message =
-    status === 413 ? 'request body too large' : status === 400 ? 'request body is not valid JSON' : 'internal error';
-  res.status(status).json({ error: status === 500 ? 'internal error' : message });
+  if (status === 500) {
+    log({
+      level: 'error',
+      event: 'unhandled_error',
+      requestId: res.locals.requestId,
+      errorName: err instanceof Error ? err.name : typeof err,
+      errorMessage: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: 'internal error' });
+    return;
+  }
+  res.status(status).json({ error: clientMessage(status, err?.type) });
 };
 
 export function createApp(store: CounterStore): Express {

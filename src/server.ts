@@ -16,7 +16,8 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   if (flagFile) setProvider(fileConfigProvider(flagFile));
 
   // Counter storage (ADR-000: SQLite). TALLY_DB_PATH names the file; its directory is created if missing.
-  const dbPath = process.env.TALLY_DB_PATH ?? './data/tally.db';
+  // `||`, not `??`: an EMPTY value would open SQLite's temporary database and lose every counter on restart.
+  const dbPath = process.env.TALLY_DB_PATH || './data/tally.db';
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
   const store = sqliteStore(dbPath);
 

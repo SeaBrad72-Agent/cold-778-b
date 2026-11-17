@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,6 +9,7 @@ import { sqliteStore, type CounterStore } from '../src/store.js';
 describe('app', () => {
   const dirs: string[] = [];
   afterEach(() => {
+    vi.restoreAllMocks();
     delete process.env.OTEL_TRACE_FILE;
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
@@ -43,6 +44,67 @@ describe('app', () => {
     const get = await request(app).get('/counters/boom');
     expect(get.status).toBe(500);
     expect(get.body).toEqual({ error: 'internal error' });
+  });
+
+  it('logs one error line naming the cause when the store fails, and marks the request line as error', async () => {
+    const lines: Array<Record<string, unknown>> = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      if (typeof line === 'string' && line.startsWith('{"ts"')) lines.push(JSON.parse(line));
+    });
+    const failing: CounterStore = {
+      create() {
+        throw new Error('disk I/O error');
+      },
+      get() {
+        return undefined;
+      },
+      close() {},
+    };
+    await request(createApp(failing)).post('/counters').set('x-request-id', 'req-500').send({ name: 'boom' });
+    const errors = lines.filter((l) => l.level === 'error');
+    expect(errors).toHaveLength(2);
+    const cause = errors.find((l) => l.event === 'unhandled_error');
+    expect(cause).toMatchObject({ requestId: 'req-500', errorName: 'Error', errorMessage: 'disk I/O error' });
+    expect(errors.find((l) => l.status === 500)).toMatchObject({ requestId: 'req-500', path: '/counters' });
+  });
+
+  it('logs ordinary requests at info level with the request fields', async () => {
+    const lines: Array<Record<string, unknown>> = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      if (typeof line === 'string' && line.startsWith('{"ts"')) lines.push(JSON.parse(line));
+    });
+    await request(createApp(sqliteStore(':memory:'))).get('/healthz').set('x-request-id', 'req-ok');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      level: 'info',
+      service: 'tally',
+      requestId: 'req-ok',
+      method: 'GET',
+      path: '/healthz',
+      status: 200,
+    });
+    expect(typeof lines[0].latencyMs).toBe('number');
+  });
+
+  it.each([
+    ['markup', '<script>'],
+    ['129 characters', 'a'.repeat(129)],
+    ['a space', 'bad id'],
+  ])('replaces an unsafe inbound request id (%s) with a minted one', async (_label, unsafe) => {
+    const lines: Array<Record<string, unknown>> = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      if (typeof line === 'string' && line.startsWith('{"ts"')) lines.push(JSON.parse(line));
+    });
+    await request(createApp(sqliteStore(':memory:'))).get('/healthz').set('x-request-id', unsafe);
+    expect(lines[0].requestId).not.toBe(unsafe);
+    expect(String(lines[0].requestId)).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('sends the security headers on a 404', async () => {
+    const res = await request(createApp(sqliteStore(':memory:'))).get('/nope');
+    expect(res.status).toBe(404);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['content-security-policy']).toBe("default-src 'none'");
   });
 
   it('writes one span per request to OTEL_TRACE_FILE when it is set', async () => {
