@@ -58,6 +58,9 @@ function isUniqueViolation(err: unknown): boolean {
 
 export function sqliteStore(path: string): CounterStore {
   const db = new DatabaseSync(path);
+  // Another connection holding the write lock makes this one WAIT (up to 5 s) rather than fail with
+  // SQLITE_BUSY: measured, two processes bumping one file crash with "database is locked" without it.
+  db.exec('PRAGMA busy_timeout = 5000');
   db.exec(
     'CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY NOT NULL, value INTEGER NOT NULL DEFAULT 0)',
   );

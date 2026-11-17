@@ -38,7 +38,7 @@
 | Control | Discharging test |
 |---|---|
 | A value never goes below zero | `test/store.test.ts::decrement below zero is refused and keeps the value` |
-| No lost updates under concurrent bumps | `test/store.test.ts::two connections interleaving increments lose no update` |
+| No lost updates under concurrent bumps | `test/store.test.ts::two processes bumping the same file concurrently lose no update` |
 | An invalid name or `by` never reaches storage | `test/counters.test.ts::never calls the store for an invalid bump` |
 | The value stays within the safe-integer range | `test/store.test.ts::increment past the maximum is refused and keeps the value` |
 
@@ -48,8 +48,14 @@ lenses: no findings except **security**: a new unauthenticated write (bump); it 
 
 ## Honest ceiling
 
-The no-lost-update test proves atomicity across two SQLite connections in one process. It does not prove behaviour across processes on a network filesystem, which is out of scope.
+The no-lost-update test runs two OS processes that bump one local file at the same time (2,000 bumps each). It proves the single guarded statement loses no update: a read-then-write variant of the same harness lost 1,887 of 4,000 updates, measured on 2026-11-17. It does not prove behaviour on a network filesystem, which is out of scope.
+
+The error-classifying read after a refused bump runs outside the UPDATE. Across processes, a counter created or deleted by another connection in that window can change which refusal is reported (404 or 409). It never affects a write, and it cannot happen within one process.
 
 ## Amendment log
 
 - 2026-11-17: initial design, GO'd by the owner.
+- 2026-11-17, reviewer round 1 (no new mechanism):
+  - The no-lost-update test was vacuous: the store is synchronous, so two connections in one process never interleave, and a read-then-write store passed it. Replaced with a two-process test, and proven load-bearing (see Honest ceiling).
+  - That test showed `SQLITE_BUSY` ("database is locked") under real contention, so the store sets `PRAGMA busy_timeout = 5000`.
+  - A body that is present but not JSON is refused with 415, and a JSON `null` with 400, instead of bumping by 1. Only a request with no body at all means "by 1".

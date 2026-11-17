@@ -86,7 +86,16 @@ export function countersRouter(store: CounterStore): Router {
           res.status(400).json({ error: firstIssue(name.error) });
           return;
         }
-        const body = BumpBody.safeParse(req.body ?? {});
+        // Only a request with NO body means "by 1". A body that is present but not JSON is refused (415),
+        // so a client that forgets the header never gets a silent +1 for its {"by": 5}; a JSON null
+        // reaches the schema and is refused (400).
+        const hasBody =
+          req.headers['transfer-encoding'] !== undefined || Number(req.headers['content-length'] ?? 0) > 0;
+        if (hasBody && !req.is('application/json')) {
+          res.status(415).json({ error: 'unsupported content type or encoding' });
+          return;
+        }
+        const body = BumpBody.safeParse(req.body === undefined ? {} : req.body);
         if (!body.success) {
           res.status(400).json({ error: firstIssue(body.error) });
           return;

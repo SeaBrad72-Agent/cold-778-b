@@ -290,6 +290,31 @@ describe('counters API', () => {
       expect(store.get('coffee')).toEqual({ name: 'coffee', value: 0 });
     });
 
+    it.each(['increment', 'decrement'])('rejects a JSON null body on %s with 400 and changes nothing', async (op) => {
+      store.increment('coffee', 5);
+      const res = await request(app).post(`/counters/coffee/${op}`).set('Content-Type', 'application/json').send('null');
+      expect(res.status).toBe(400);
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 5 });
+    });
+
+    // A client that forgets the JSON header must not get a silent +1 for its {"by": 5}.
+    it.each([
+      ['text/plain', 'text/plain'],
+      ['a form body (curl -d without -H)', 'application/x-www-form-urlencoded'],
+      ['no content type', undefined],
+    ])('refuses a non-JSON body (%s) with 415 and changes nothing', async (_label, type) => {
+      store.increment('coffee', 5);
+      for (const op of ['increment', 'decrement']) {
+        const req = request(app).post(`/counters/coffee/${op}`);
+        if (type) req.set('Content-Type', type);
+        else req.unset('Content-Type');
+        const res = await req.send('{"by":5}');
+        expect(res.status).toBe(415);
+        expect(res.body).toEqual({ error: 'unsupported content type or encoding' });
+      }
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 5 });
+    });
+
     it('refuses a body over 1kb with 413', async () => {
       const res = await request(app)
         .post('/counters/coffee/increment')
