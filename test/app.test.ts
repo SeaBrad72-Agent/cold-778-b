@@ -125,10 +125,14 @@ describe('app', () => {
     const app = createApp(failingStore('disk I/O error'));
     await request(app).post('/counters').send({ name: 'boom' });
     await request(app).get('/counters/boom');
+    await request(app).post('/counters/boom/increment');
+    await request(app).post('/counters/boom/decrement').send({ by: 2 });
     const spans = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     expect(spans.map((s) => [s.name, s.status.code])).toEqual([
       ['POST /counters', 'ERROR'],
       ['GET /counters/:name', 'ERROR'],
+      ['POST /counters/:name/increment', 'ERROR'],
+      ['POST /counters/:name/decrement', 'ERROR'],
     ]);
   });
 
