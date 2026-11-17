@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
-import { server } from '../src/server.js';
+import { createServer } from 'node:http';
+import { createApp } from '../src/app.js';
+import { sqliteStore } from '../src/store.js';
+
+const server = createServer(createApp(sqliteStore(':memory:')));
 
 // Integration: the feature flag wires THROUGH the running server to the /greeting response.
 // Unlike the unit tests (isEnabled() in isolation), here the flag registry + route handler + HTTP

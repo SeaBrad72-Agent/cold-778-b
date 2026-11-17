@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { AddressInfo } from 'node:net';
-import { server } from '../src/server.js';
+import { createServer } from 'node:http';
+import { createApp } from '../src/app.js';
+import { sqliteStore } from '../src/store.js';
+
+const server = createServer(createApp(sqliteStore(':memory:')));
 
 // E2E: a full user journey against the assembled service — liveness, the greeting feature, and the
 // not-found path — proving end-to-end behaviour in-suite. DISTINCT from post-deploy smoke (which

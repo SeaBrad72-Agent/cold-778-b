@@ -65,3 +65,6 @@ dist
 coverage
 !/src/
 !/test/
+
+# tally's local SQLite database (TALLY_DB_PATH default ./data/tally.db) — runtime data, never committed
+/data/
