@@ -52,3 +52,8 @@ Paging is by name, not a snapshot. A counter created or deleted between two page
 
 - 2026-11-17: initial design, GO'd by the owner.
 - 2026-11-17, during the build (no new mechanism): the query is **strict**, so an unknown parameter is refused with 400, not ignored. Express's query parser turns `after[x]=a` into an unknown key, which a lenient schema would silently skip. "Reject by default" applies; a cache-busting parameter such as `?_=123` is refused too. The bounded-response control is discharged by the invalid-query test's `limit 1001` row, not the paging test this design first named.
+- 2026-11-17, review round 1 (reviewer APPROVE with 3 Minors; security PASS-WITH-NOTES):
+  - **The app's query parser has no key cap** (security L1). Node's default kept only the first 1,000 pairs, so `?&&&…&limit=5000` slipped past the strict schema. It applies to every route, and Node's 16 kB header limit still bounds the query.
+  - A repeated `after` now says `after must be a single counter name` (reviewer m2). `store.list` throws a RangeError for a `limit` that is not an integer ≥ 1, because SQLite reads a negative LIMIT as "no limit" (reviewer m1).
+  - Negative tests were added for every attack shape the security seat listed (L2) and for an empty `after` (reviewer m3).
+  - **Carried, made worse here** (security M1): with the list, a DNS-rebound page can read the whole table, not only names it guesses. COLD-7 (Host allowlist) records this and is now first on the board.

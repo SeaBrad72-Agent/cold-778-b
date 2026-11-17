@@ -39,8 +39,8 @@ function firstIssue(err: z.ZodError): string {
 }
 
 /** GET /counters query: limit 1..1000 as plain digits (default 100), after = a valid name. Strict: an
- * unknown or repeated parameter is refused rather than ignored (Express's parser yields an array for a
- * repeat, and a key such as `after[x]` for brackets). */
+ * unknown key (such as `after[x]` from brackets) is refused rather than ignored; a repeated key arrives
+ * as an array and is refused by that parameter's own string check, with that parameter's message. */
 const LIMIT_ERROR = 'limit must be a whole number from 1 to 1000';
 const ListQuery = z.strictObject(
   {
@@ -50,9 +50,9 @@ const ListQuery = z.strictObject(
       .transform(Number)
       .refine((n) => n <= 1000, { error: LIMIT_ERROR })
       .default(100),
-    after: NAME.optional(),
+    after: z.string({ error: 'after must be a single counter name' }).pipe(NAME).optional(),
   },
-  { error: 'unknown or repeated query parameter' },
+  { error: 'unknown query parameter' },
 );
 
 export function countersRouter(store: CounterStore): Router {

@@ -404,6 +404,23 @@ describe('counters API', () => {
       ['an encoded newline in after', 'after=abc%0A'],
       ['a repeated after', 'after=a&after=b'],
       ['a bracketed after', 'after[x]=a'],
+      // Security round 1, L2: one row per further attack shape.
+      ['a __proto__ key', '__proto__=x'],
+      ['a constructor key', 'constructor=x'],
+      ['a nested constructor key', 'constructor[prototype][x]=1'],
+      ['a plain unknown key', '_=1'],
+      ['a signed limit', 'limit=%2B1'],
+      ['a limit with a trailing space', 'limit=1%20'],
+      ['a fullwidth-digit limit', 'limit=%EF%BC%91'],
+      ['a limit with a NUL', 'limit=1%00'],
+      ['a SQL-shaped after', "after=a'%20OR%201=1--"],
+      ['an empty after', 'after='],
+      ['an after with no value', 'after'],
+      ['a limit with no value', 'limit'],
+      ['an empty key', '=x'],
+      // Security round 1, L1: Node's parser kept only the first 1000 pairs, so a long run of '&' hid the rest.
+      ['a parameter after 1000 empty pairs', `${'&'.repeat(1000)}limit=5000`],
+      ['an unknown key after 1000 empty pairs', `${'&'.repeat(1000)}evil=1`],
     ];
     it.each(invalidQueries)('rejects an invalid query with 400: %s', async (_label, query) => {
       const res = await request(app).get(`/counters?${query}`);
@@ -416,6 +433,12 @@ describe('counters API', () => {
       const res = await request(createApp(tripwireStore(calls))).get(`/counters?${query}`);
       expect(res.status).toBe(400);
       expect(calls).toEqual([]);
+    });
+
+    it('names the offending parameter when after is repeated', async () => {
+      const res = await request(app).get('/counters?after=a&after=b');
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: 'after must be a single counter name' });
     });
 
     it('sends the security headers on the list', async () => {

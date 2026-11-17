@@ -17,7 +17,8 @@ export interface CounterStore {
   increment(name: string, by: number): Counter;
   /** Subtract `by` (>= 1) atomically. Throws CounterNotFoundError, or CounterBoundError below zero. */
   decrement(name: string, by: number): Counter;
-  /** Up to `limit` counters whose name sorts after `after`, by name; `next` is set when more follow. */
+  /** Up to `limit` (an integer >= 1; RangeError otherwise) counters whose name sorts after `after`, by
+   * name; `next` is set when more follow. */
   list(after: string | undefined, limit: number): CounterPage;
   close(): void;
 }
@@ -113,6 +114,8 @@ export function sqliteStore(path: string): CounterStore {
       return { name, value: Number(row.value) };
     },
     list(after, limit) {
+      // SQLite reads a negative LIMIT as "no limit", so the store guards its own precondition.
+      if (!Number.isInteger(limit) || limit < 1) throw new RangeError('limit must be an integer >= 1');
       const rows = page.all(after ?? '', limit + 1) as Array<{ name: string; value: number }>;
       const counters = rows.slice(0, limit).map((r) => ({ name: r.name, value: Number(r.value) }));
       return rows.length > limit ? { counters, next: counters[counters.length - 1].name } : { counters };

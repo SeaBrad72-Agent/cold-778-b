@@ -176,6 +176,11 @@ describe('sqliteStore', () => {
       expect(seeded('apple', 'cherry').list('banana', 10)).toEqual({ counters: [{ name: 'cherry', value: 0 }] });
     });
 
+    it.each([0, -2, 1.5, Number.NaN])('refuses a limit that is not an integer >= 1: %s', (limit) => {
+      const store = seeded('a', 'b');
+      expect(() => store.list(undefined, limit)).toThrow(RangeError);
+    });
+
     it('walking every page returns every counter once', () => {
       const names = Array.from({ length: 237 }, (_, i) => `c-${String(i).padStart(3, '0')}`);
       const store = seeded(...[...names].reverse());
