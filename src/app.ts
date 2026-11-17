@@ -2,7 +2,7 @@
 // per-request telemetry (request id, structured log line, OTel-semantic span, Prometheus counters) and
 // security headers, the scaffold's routes (/healthz, /metrics, /greeting), and a JSON 404/error tail.
 // server.ts is the entrypoint that opens the real store and listens; tests pass a ':memory:' store.
-import express, { type ErrorRequestHandler, type Express, type RequestHandler } from 'express';
+import express, { type ErrorRequestHandler, type Express, type Request, type RequestHandler } from 'express';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { health } from './health.js';
@@ -73,6 +73,17 @@ function createMetrics(): Metrics {
   };
 }
 
+const MAX_LOGGED_PATH = 512;
+
+// A span is named by the matched ROUTE TEMPLATE (`/counters/:name`), never the raw URL, so span names
+// stay bounded (cardinality) and carry no attacker-chosen text. A request no route matched is `unmatched`.
+function routeTemplate(req: Request): string {
+  const route = (req as Request & { route?: { path?: unknown } }).route;
+  if (!route || typeof route.path !== 'string') return 'unmatched';
+  const sub = route.path === '/' ? '' : route.path;
+  return `${req.baseUrl}${sub}` || '/';
+}
+
 function telemetry(metrics: Metrics): RequestHandler {
   return (req, res, next) => {
     const startMono = process.hrtime.bigint();
@@ -80,7 +91,8 @@ function telemetry(metrics: Metrics): RequestHandler {
     // Honor an inbound correlation id ONLY if it is a safe, bounded token; otherwise mint one.
     const raw = req.get('x-request-id');
     const requestId = raw && /^[A-Za-z0-9._-]{1,128}$/.test(raw) ? raw : randomUUID();
-    const path = req.originalUrl;
+    // The logged path is attacker-chosen (any URL up to Node's header limit): cap it.
+    const path = req.originalUrl.slice(0, MAX_LOGGED_PATH);
     res.locals.requestId = requestId; // read by the error tail, so its ERROR line correlates
 
     res.set(SECURITY_HEADERS);
@@ -100,7 +112,7 @@ function telemetry(metrics: Metrics): RequestHandler {
         trace_id: randomBytes(16).toString('hex'),
         span_id: randomBytes(8).toString('hex'),
         parent_span_id: null,
-        name: `${req.method} ${path.split('?')[0]}`,
+        name: `${req.method} ${routeTemplate(req)}`,
         start_unix_nano: startNano.toString(),
         end_unix_nano: (startNano + (endMono - startMono)).toString(),
         attributes: {

@@ -45,14 +45,61 @@ describe('counters API', () => {
       ['a space', 'coffee runs'],
       ['a slash', 'coffee/runs'],
       ['SQL metacharacters', "x'); DROP TABLE counters; --"],
+      ['a trailing newline', 'abc\n'],
+      ['a non-ASCII letter', 'café'],
+      ['a fullwidth digit', '１'],
+      ['an embedded NUL', 'a\u0000b'],
       ['a number, not a string', 42],
       ['null', null],
+      ['an array', ['coffee']],
+      ['an object', { value: 'coffee' }],
     ];
     it.each(invalidNames)('rejects invalid names with 400 and stores nothing: %s', async (_label, name) => {
       const res = await request(app).post('/counters').send({ name });
       expect(res.status).toBe(400);
       expect(typeof res.body.error).toBe('string');
       if (typeof name === 'string') expect(store.get(name)).toBeUndefined();
+    });
+
+    // The design-promised control: an invalid name is refused BEFORE any storage call.
+    it.each(invalidNames)('never calls the store for an invalid name: %s', async (_label, name) => {
+      const calls: string[] = [];
+      const tripwire: CounterStore = {
+        create(n) {
+          calls.push(`create:${n}`);
+          throw new Error('store must not be called');
+        },
+        get(n) {
+          calls.push(`get:${n}`);
+          throw new Error('store must not be called');
+        },
+        close() {},
+      };
+      const guarded = createApp(tripwire);
+      const post = await request(guarded).post('/counters').send({ name });
+      expect(post.status).toBe(400);
+      if (typeof name === 'string') {
+        const get = await request(guarded).get(`/counters/${encodeURIComponent(name)}`);
+        // An empty name leaves `/counters/`, which no route matches yet (404); every other name is a 400.
+        expect(get.status).toBe(name === '' ? 404 : 400);
+      }
+      expect(calls).toEqual([]);
+    });
+
+    it('drops prototype-pollution keys: the valid name creates and Object.prototype stays clean', async () => {
+      const res = await request(app)
+        .post('/counters')
+        .set('Content-Type', 'application/json')
+        .send('{"name":"coffee","__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}}}');
+      expect(res.status).toBe(201);
+      expect(res.body).toEqual({ name: 'coffee', value: 0 });
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
+    it('rejects a JSON-looking body sent as text/plain with 400', async () => {
+      const res = await request(app).post('/counters').set('Content-Type', 'text/plain').send('{"name":"coffee"}');
+      expect(res.status).toBe(400);
+      expect(store.get('coffee')).toBeUndefined();
     });
 
     it('rejects a body with no name with 400', async () => {
@@ -120,7 +167,15 @@ describe('counters API', () => {
       expect(res.body).toEqual({ error: 'counter not found' });
     });
 
-    it.each([['uppercase', 'Standup'], ['leading hyphen', '-standup'], ['65 characters', 'a'.repeat(65)]])(
+    it.each([
+      ['uppercase', 'Standup'],
+      ['leading hyphen', '-standup'],
+      ['65 characters', 'a'.repeat(65)],
+      ['an encoded slash', 'a%2Fb'],
+      ['an encoded NUL', 'a%00b'],
+      ['an encoded trailing newline', 'abc%0A'],
+      ['SQL metacharacters', "x'%20OR%201=1--"],
+    ])(
       'answers 400 for an invalid name: %s',
       async (_label, name) => {
         const res = await request(app).get(`/counters/${name}`);

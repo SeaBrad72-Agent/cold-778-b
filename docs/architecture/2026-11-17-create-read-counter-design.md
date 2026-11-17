@@ -88,3 +88,8 @@ Tests prove the contract in §2 against an in-memory database and a file databas
   - "Unchanged" for `/healthz`, `/metrics` and `/greeting` means the same responses at the same paths. Express routing also accepts a trailing slash, a query string and any letter case (`/HEALTHZ`), where the old exact match answered 404. This is accepted as harmless.
   - The default `SERVICE_NAME` in log lines and spans is now `tally` (was `reference-app`).
   - An empty `TALLY_DB_PATH` falls back to `./data/tally.db` instead of opening a temporary database.
+- 2026-11-17, security seat (PASS-WITH-NOTES; hardening of existing behaviour, no new mechanism):
+  - Spans are named by route template (`GET /counters/:name`, or `unmatched`), never the raw URL; the logged `path` is capped at 512 characters.
+  - The server listens on `HOST`, default `127.0.0.1`. A container must set `HOST=0.0.0.0` (the profile's Dockerfile, when it is adopted).
+  - `PORT`, `HOST` and `TALLY_DB_PATH` are documented in `README.md`. `.env.example` is owed: the agent's permission settings deny reading it.
+  - Carried forward, not built here: a cap or rate limit on counter creation, owed with the auth or deploy slice.

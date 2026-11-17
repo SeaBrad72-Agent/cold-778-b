@@ -107,6 +107,30 @@ describe('app', () => {
     expect(res.headers['content-security-policy']).toBe("default-src 'none'");
   });
 
+  it('names spans by route template, never by the raw URL', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tally-otel-'));
+    dirs.push(dir);
+    const file = join(dir, 'spans.jsonl');
+    process.env.OTEL_TRACE_FILE = file;
+    const app = createApp(sqliteStore(':memory:'));
+    await request(app).get('/counters/coffee-runs');
+    await request(app).get("/counters/x'%20OR%201=1--");
+    await request(app).post('/counters').send({ name: 'standup' });
+    await request(app).get(`/${'a'.repeat(4000)}`);
+    const names = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l).name);
+    expect(names).toEqual(['GET /counters/:name', 'GET /counters/:name', 'POST /counters', 'GET unmatched']);
+  });
+
+  it('caps the logged path at 512 characters', async () => {
+    const lines: Array<Record<string, unknown>> = [];
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      if (typeof line === 'string' && line.startsWith('{"ts"')) lines.push(JSON.parse(line));
+    });
+    await request(createApp(sqliteStore(':memory:'))).get(`/${'a'.repeat(4000)}`);
+    expect(String(lines[0].path)).toHaveLength(512);
+    expect(String(lines[0].path).startsWith('/aaa')).toBe(true);
+  });
+
   it('writes one span per request to OTEL_TRACE_FILE when it is set', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tally-otel-'));
     dirs.push(dir);
