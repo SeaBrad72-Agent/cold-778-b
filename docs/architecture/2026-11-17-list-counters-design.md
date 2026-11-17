@@ -36,7 +36,7 @@ The list is a read. The cross-site write guard does not apply. Headers, request 
 
 | Control | Discharging test |
 |---|---|
-| A response is bounded (at most 1000 counters) | `test/counters.test.ts::caps a page at the limit and sets next` |
+| A response is bounded (at most 1000 counters) | `test/counters.test.ts::rejects an invalid query with 400` (its `limit 1001` row; proven by raising the cap, which failed it) |
 | Paging returns every counter exactly once | `test/store.test.ts::walking every page returns every counter once` |
 | An invalid query never reaches storage | `test/counters.test.ts::never calls the store for an invalid list query` |
 
@@ -51,3 +51,4 @@ Paging is by name, not a snapshot. A counter created or deleted between two page
 ## Amendment log
 
 - 2026-11-17: initial design, GO'd by the owner.
+- 2026-11-17, during the build (no new mechanism): the query is **strict**, so an unknown parameter is refused with 400, not ignored. Express's query parser turns `after[x]=a` into an unknown key, which a lenient schema would silently skip. "Reject by default" applies; a cache-busting parameter such as `?_=123` is refused too. The bounded-response control is discharged by the invalid-query test's `limit 1001` row, not the paging test this design first named.

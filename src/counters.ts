@@ -38,8 +38,34 @@ function firstIssue(err: z.ZodError): string {
   return err.issues[0]?.message ?? 'invalid request';
 }
 
+/** GET /counters query: limit 1..1000 as plain digits (default 100), after = a valid name. Strict: an
+ * unknown or repeated parameter is refused rather than ignored (Express's parser yields an array for a
+ * repeat, and a key such as `after[x]` for brackets). */
+const LIMIT_ERROR = 'limit must be a whole number from 1 to 1000';
+const ListQuery = z.strictObject(
+  {
+    limit: z
+      .string({ error: LIMIT_ERROR })
+      .regex(/^[1-9][0-9]{0,3}$/, { error: LIMIT_ERROR })
+      .transform(Number)
+      .refine((n) => n <= 1000, { error: LIMIT_ERROR })
+      .default(100),
+    after: NAME.optional(),
+  },
+  { error: 'unknown or repeated query parameter' },
+);
+
 export function countersRouter(store: CounterStore): Router {
   const router = Router();
+
+  router.get('/', routeName('/counters'), (req, res) => {
+    const query = ListQuery.safeParse(req.query);
+    if (!query.success) {
+      res.status(400).json({ error: firstIssue(query.error) });
+      return;
+    }
+    res.json(store.list(query.data.after, query.data.limit));
+  });
 
   // routeName runs BEFORE the body parser, so a 400/413/415 from parsing still carries the route's name.
   router.post('/', routeName('/counters'), express.json({ limit: '1kb', strict: false }), (req, res) => {

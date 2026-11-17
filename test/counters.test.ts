@@ -68,10 +68,10 @@ describe('counters API', () => {
       const guarded = createApp(tripwireStore(calls));
       const post = await request(guarded).post('/counters').send({ name });
       expect(post.status).toBe(400);
-      if (typeof name === 'string') {
+      // An empty name leaves `/counters/`, which is the list (COLD-8), not a name lookup: skip it here.
+      if (typeof name === 'string' && name !== '') {
         const get = await request(guarded).get(`/counters/${encodeURIComponent(name)}`);
-        // An empty name leaves `/counters/`, which no route matches yet (404); every other name is a 400.
-        expect(get.status).toBe(name === '' ? 404 : 400);
+        expect(get.status).toBe(400);
       }
       expect(calls).toEqual([]);
     });
@@ -344,6 +344,82 @@ describe('counters API', () => {
     it('sends the security headers on bump responses, including a 409', async () => {
       const res = await request(app).post('/counters/coffee/decrement');
       expect(res.status).toBe(409);
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['content-security-policy']).toBe("default-src 'none'");
+    });
+  });
+
+  describe('GET /counters (list)', () => {
+    it('answers 200 with an empty list when there are no counters', async () => {
+      const res = await request(app).get('/counters');
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('application/json');
+      expect(res.body).toEqual({ counters: [] });
+    });
+
+    it('lists counters sorted by name with their values, on /counters and /counters/', async () => {
+      store.create('coffee');
+      store.create('bugs');
+      store.increment('bugs', 2);
+      const expected = { counters: [{ name: 'bugs', value: 2 }, { name: 'coffee', value: 0 }] };
+      expect((await request(app).get('/counters')).body).toEqual(expected);
+      expect((await request(app).get('/counters/')).body).toEqual(expected);
+    });
+
+    it('defaults to 100 per page', async () => {
+      for (let i = 0; i < 101; i++) store.create(`c-${String(i).padStart(3, '0')}`);
+      const res = await request(app).get('/counters');
+      expect(res.body.counters).toHaveLength(100);
+      expect(res.body.next).toBe('c-099');
+    });
+
+    it('caps a page at the limit and sets next', async () => {
+      for (const n of ['a', 'b', 'c']) store.create(n);
+      const first = await request(app).get('/counters?limit=2');
+      expect(first.status).toBe(200);
+      expect(first.body).toEqual({ counters: [{ name: 'a', value: 0 }, { name: 'b', value: 0 }], next: 'b' });
+      const second = await request(app).get(`/counters?limit=2&after=${first.body.next}`);
+      expect(second.body).toEqual({ counters: [{ name: 'c', value: 0 }] });
+    });
+
+    it('accepts the largest limit (1000)', async () => {
+      store.create('a');
+      const res = await request(app).get('/counters?limit=1000');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ counters: [{ name: 'a', value: 0 }] });
+    });
+
+    const invalidQueries: Array<[string, string]> = [
+      ['limit 0', 'limit=0'],
+      ['limit 1001', 'limit=1001'],
+      ['a negative limit', 'limit=-1'],
+      ['a fractional limit', 'limit=1.5'],
+      ['a word limit', 'limit=abc'],
+      ['an empty limit', 'limit='],
+      ['an exponent limit', 'limit=1e2'],
+      ['a leading-zero limit', 'limit=010'],
+      ['a repeated limit', 'limit=1&limit=2'],
+      ['an uppercase after', 'after=Coffee'],
+      ['a too-long after', `after=${'a'.repeat(65)}`],
+      ['an encoded newline in after', 'after=abc%0A'],
+      ['a repeated after', 'after=a&after=b'],
+      ['a bracketed after', 'after[x]=a'],
+    ];
+    it.each(invalidQueries)('rejects an invalid query with 400: %s', async (_label, query) => {
+      const res = await request(app).get(`/counters?${query}`);
+      expect(res.status).toBe(400);
+      expect(typeof res.body.error).toBe('string');
+    });
+
+    it.each(invalidQueries)('never calls the store for an invalid list query: %s', async (_label, query) => {
+      const calls: string[] = [];
+      const res = await request(createApp(tripwireStore(calls))).get(`/counters?${query}`);
+      expect(res.status).toBe(400);
+      expect(calls).toEqual([]);
+    });
+
+    it('sends the security headers on the list', async () => {
+      const res = await request(app).get('/counters');
       expect(res.headers['x-content-type-options']).toBe('nosniff');
       expect(res.headers['content-security-policy']).toBe("default-src 'none'");
     });
