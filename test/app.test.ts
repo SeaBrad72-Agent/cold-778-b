@@ -15,6 +15,57 @@ describe('app', () => {
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   });
 
+  describe('cross-site write refusal (COLD-6 security M1, owner decision 2026-11-17)', () => {
+    const seeded = () => {
+      const store = sqliteStore(':memory:');
+      store.create('coffee');
+      store.increment('coffee', 3);
+      return store;
+    };
+
+    // Each attack shape a browser can produce; every one must leave the value unchanged.
+    it.each([
+      ['Sec-Fetch-Site: cross-site, no body (no-cors fetch)', { 'Sec-Fetch-Site': 'cross-site' }],
+      ['Sec-Fetch-Site: same-site', { 'Sec-Fetch-Site': 'same-site' }],
+      ['a foreign Origin', { Origin: 'https://evil.example' }],
+      ['an opaque Origin (sandboxed page)', { Origin: 'null' }],
+      ['DNS rebinding: Origin equals Host but is not loopback', { Origin: 'http://evil.example:3000', Host: 'evil.example:3000' }],
+      ['a loopback Origin on another port', { Origin: 'http://localhost:9999', Host: 'localhost:3000' }],
+    ])('refuses a cross-site write with 403 and changes nothing: %s', async (_label, headers) => {
+      const store = seeded();
+      const app = createApp(store);
+      for (const path of ['/counters/coffee/decrement', '/counters/coffee/increment']) {
+        const res = await request(app).post(path).set(headers as Record<string, string>);
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual({ error: 'cross-site request refused' });
+      }
+      const create = await request(app).post('/counters').set(headers as Record<string, string>).send({ name: 'x' });
+      expect(create.status).toBe(403);
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 3 });
+      expect(store.get('x')).toBeUndefined();
+    });
+
+    it.each([
+      ['no browser headers (curl, a script)', {}],
+      ['Sec-Fetch-Site: same-origin from a loopback page', { 'Sec-Fetch-Site': 'same-origin', Origin: 'http://localhost:3000', Host: 'localhost:3000' }],
+      ['Sec-Fetch-Site: none (typed by the user)', { 'Sec-Fetch-Site': 'none' }],
+      ['a 127.0.0.1 Origin matching Host', { Origin: 'http://127.0.0.1:3000', Host: '127.0.0.1:3000' }],
+    ])('allows a write that is not cross-site: %s', async (_label, headers) => {
+      const store = seeded();
+      const res = await request(createApp(store)).post('/counters/coffee/increment').set(headers as Record<string, string>);
+      expect(res.status).toBe(200);
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 4 });
+    });
+
+    it('leaves reads alone: a cross-site GET is answered', async () => {
+      const store = seeded();
+      const res = await request(createApp(store))
+        .get('/counters/coffee')
+        .set({ 'Sec-Fetch-Site': 'cross-site', Origin: 'https://evil.example' });
+      expect(res.status).toBe(200);
+    });
+  });
+
   it('counts handled requests on /metrics by method and status', async () => {
     const app = createApp(sqliteStore(':memory:'));
     await request(app).get('/healthz');

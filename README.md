@@ -30,6 +30,8 @@ curl -s -X POST localhost:3000/counters/coffee-runs/decrement
 
 A counter never goes below zero: a decrement that would take it there answers `409` and leaves the value unchanged.
 
+Writes from a web page on another site are refused (`403 cross-site request refused`), so a page you visit cannot change your counters through your browser. curl and scripts are unaffected.
+
 | Variable | Default | What it does |
 |---|---|---|
 | `PORT` | `3000` | The port to listen on. |

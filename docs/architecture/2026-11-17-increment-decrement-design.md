@@ -41,6 +41,7 @@
 | No lost updates under concurrent bumps | `test/store.test.ts::two processes bumping the same file concurrently lose no update` |
 | An invalid name or `by` never reaches storage | `test/counters.test.ts::never calls the store for an invalid bump` |
 | The value stays within the safe-integer range | `test/store.test.ts::increment past the maximum is refused and keeps the value` |
+| A cross-site browser write never changes a counter (amendment, security M1) | `test/app.test.ts::refuses a cross-site write with 403 and changes nothing` |
 
 ## Lens review (S, one line)
 
@@ -59,3 +60,9 @@ The error-classifying read after a refused bump runs outside the UPDATE. Across 
   - The no-lost-update test was vacuous: the store is synchronous, so two connections in one process never interleave, and a read-then-write store passed it. Replaced with a two-process test, and proven load-bearing (see Honest ceiling).
   - That test showed `SQLITE_BUSY` ("database is locked") under real contention, so the store sets `PRAGMA busy_timeout = 5000`.
   - A body that is present but not JSON is refused with 415, and a JSON `null` with 400, instead of bumping by 1. Only a request with no body at all means "by 1".
+- 2026-11-17, security seat round 1, M1, **owner decision: refuse cross-site browser writes** (options were: refuse cross-site / always require JSON / carry as a card). A new **mechanism**, so recorded here as a design revision, with the owner's GO given in the session:
+  - Every write (any method but GET, HEAD and OPTIONS) is refused with **403** `cross-site request refused` when `Sec-Fetch-Site` is `cross-site` or `same-site`, or when an `Origin` is present and is not a loopback name (`localhost`, `127.0.0.1`, `[::1]`) equal to `Host`. The loopback requirement defeats DNS rebinding, where Origin and Host both name the attacker's domain.
+  - It covers `POST /counters` (COLD-2) as well as the bumps. curl and scripts send neither header and are unaffected; reads are unaffected.
+  - Consequence: a browser page on another host cannot write to tally even when `TALLY_HOST=0.0.0.0`. There is no web UI in scope, so nothing breaks; a future UI slice must revisit this list.
+  - Design-promised control: **a cross-site browser write never changes a counter**, discharged by `test/app.test.ts::refuses a cross-site write with 403 and changes nothing`, proven load-bearing (weakening the check to Origin-equals-Host let the rebinding case through, and the test failed).
+  - Not built: a CHECK constraint on the column (the security note, defence in depth only). The classifying-read window (security L2) is in the Honest ceiling and must be revisited by the delete slice.
