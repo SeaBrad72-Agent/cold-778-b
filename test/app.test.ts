@@ -117,8 +117,45 @@ describe('app', () => {
     await request(app).get("/counters/x'%20OR%201=1--");
     await request(app).post('/counters').send({ name: 'standup' });
     await request(app).get(`/${'a'.repeat(4000)}`);
+    // Error paths keep the route's name: a body-parser 400 and 413, and letter-case variants.
+    await request(app).post('/counters').set('Content-Type', 'application/json').send('{"name":');
+    await request(app).post('/counters').send({ name: 'x', padding: 'x'.repeat(2048) });
+    await request(app).get('/CoUnTeRs/standup');
     const names = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l).name);
-    expect(names).toEqual(['GET /counters/:name', 'GET /counters/:name', 'POST /counters', 'GET unmatched']);
+    expect(names).toEqual([
+      'GET /counters/:name',
+      'GET /counters/:name',
+      'POST /counters',
+      'GET unmatched',
+      'POST /counters',
+      'POST /counters',
+      'GET /counters/:name',
+    ]);
+  });
+
+  it('names a 500 span by its route on both counter routes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tally-otel-'));
+    dirs.push(dir);
+    const file = join(dir, 'spans.jsonl');
+    process.env.OTEL_TRACE_FILE = file;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const failing: CounterStore = {
+      create() {
+        throw new Error('disk I/O error');
+      },
+      get() {
+        throw new Error('disk I/O error');
+      },
+      close() {},
+    };
+    const app = createApp(failing);
+    await request(app).post('/counters').send({ name: 'boom' });
+    await request(app).get('/counters/boom');
+    const spans = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(spans.map((s) => [s.name, s.status.code])).toEqual([
+      ['POST /counters', 'ERROR'],
+      ['GET /counters/:name', 'ERROR'],
+    ]);
   });
 
   it('caps the logged path at 512 characters', async () => {

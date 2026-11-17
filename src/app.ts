@@ -2,13 +2,14 @@
 // per-request telemetry (request id, structured log line, OTel-semantic span, Prometheus counters) and
 // security headers, the scaffold's routes (/healthz, /metrics, /greeting), and a JSON 404/error tail.
 // server.ts is the entrypoint that opens the real store and listens; tests pass a ':memory:' store.
-import express, { type ErrorRequestHandler, type Express, type Request, type RequestHandler } from 'express';
+import express, { type ErrorRequestHandler, type Express, type RequestHandler, type Response } from 'express';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { health } from './health.js';
 import { isEnabled } from './flags.js';
 import type { CounterStore } from './store.js';
 import { countersRouter } from './counters.js';
+import { routeName } from './route-name.js';
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -75,13 +76,9 @@ function createMetrics(): Metrics {
 
 const MAX_LOGGED_PATH = 512;
 
-// A span is named by the matched ROUTE TEMPLATE (`/counters/:name`), never the raw URL, so span names
-// stay bounded (cardinality) and carry no attacker-chosen text. A request no route matched is `unmatched`.
-function routeTemplate(req: Request): string {
-  const route = (req as Request & { route?: { path?: unknown } }).route;
-  if (!route || typeof route.path !== 'string') return 'unmatched';
-  const sub = route.path === '/' ? '' : route.path;
-  return `${req.baseUrl}${sub}` || '/';
+// Span name: the fixed template recorded by routeName() (src/route-name.ts), else `unmatched`.
+function routeTemplate(res: Response): string {
+  return typeof res.locals.route === 'string' ? res.locals.route : 'unmatched';
 }
 
 function telemetry(metrics: Metrics): RequestHandler {
@@ -112,7 +109,7 @@ function telemetry(metrics: Metrics): RequestHandler {
         trace_id: randomBytes(16).toString('hex'),
         span_id: randomBytes(8).toString('hex'),
         parent_span_id: null,
-        name: `${req.method} ${routeTemplate(req)}`,
+        name: `${req.method} ${routeTemplate(res)}`,
         start_unix_nano: startNano.toString(),
         end_unix_nano: (startNano + (endMono - startMono)).toString(),
         attributes: {
@@ -161,14 +158,14 @@ export function createApp(store: CounterStore): Express {
   const metrics = createMetrics();
   app.use(telemetry(metrics));
 
-  app.get('/healthz', (_req, res) => {
+  app.get('/healthz', routeName('/healthz'), (_req, res) => {
     res.json(health());
   });
-  app.get('/metrics', (_req, res) => {
+  app.get('/metrics', routeName('/metrics'), (_req, res) => {
     res.setHeader('Content-Type', 'text/plain; version=0.0.4');
     res.end(metrics.render());
   });
-  app.get('/greeting', (_req, res) => {
+  app.get('/greeting', routeName('/greeting'), (_req, res) => {
     res.json({ greeting: isEnabled('newGreeting') ? 'Hello, world! (new)' : 'Hello, world!' });
   });
   app.use('/counters', countersRouter(store));

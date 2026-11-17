@@ -28,7 +28,7 @@ curl -s localhost:3000/counters/coffee-runs
 | Variable | Default | What it does |
 |---|---|---|
 | `PORT` | `3000` | The port to listen on. |
-| `HOST` | `127.0.0.1` | The interface to listen on. The counter API has no login, so the default is this machine only; set `0.0.0.0` (for example in a container) to open it to the network on purpose. |
+| `TALLY_HOST` | `127.0.0.1` | The interface to listen on. The counter API has no login, so the default is this machine only; set `0.0.0.0` (for example in a container) to open it to the network on purpose. |
 | `TALLY_DB_PATH` | `./data/tally.db` | The SQLite file that holds the counters. Its folder is created if missing; `/data/` is gitignored. An empty value falls back to the default. |
 
 `RUNBOOK.md` carries the full setup, deploy, troubleshoot and rollback detail.

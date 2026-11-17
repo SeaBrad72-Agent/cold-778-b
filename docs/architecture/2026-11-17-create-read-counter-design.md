@@ -89,7 +89,7 @@ Tests prove the contract in §2 against an in-memory database and a file databas
   - The default `SERVICE_NAME` in log lines and spans is now `tally` (was `reference-app`).
   - An empty `TALLY_DB_PATH` falls back to `./data/tally.db` instead of opening a temporary database.
 - 2026-11-17, security seat (PASS-WITH-NOTES; hardening of existing behaviour, no new mechanism):
-  - Spans are named by route template (`GET /counters/:name`, or `unmatched`), never the raw URL; the logged `path` is capped at 512 characters.
-  - The server listens on `HOST`, default `127.0.0.1`. A container must set `HOST=0.0.0.0` (the profile's Dockerfile, when it is adopted).
-  - `PORT`, `HOST` and `TALLY_DB_PATH` are documented in `README.md`. `.env.example` is owed: the agent's permission settings deny reading it.
-  - Carried forward, not built here: a cap or rate limit on counter creation, owed with the auth or deploy slice.
+  - Spans are named by a fixed route template recorded when the route matches (`GET /counters/:name`, `POST /counters`, or `unmatched`), so error paths keep the right name and no request text reaches a span name. The logged `path` is capped at 512 characters.
+  - The server listens on `TALLY_HOST`, default `127.0.0.1` (not `HOST`, which some shells export as the hostname). A container must set `TALLY_HOST=0.0.0.0` (the profile's Dockerfile, when it is adopted).
+  - `PORT`, `TALLY_HOST` and `TALLY_DB_PATH` are documented in `README.md`. `.env.example` is carried as **COLD-3**: the agent's permission settings deny reading it.
+  - Carried forward, not built here: a cap or rate limit on counter creation, **COLD-4**, owed before the service is reachable from more than one machine (the auth or deploy slice). The baseline toolchain's `npm audit` findings are **COLD-5**.

@@ -23,8 +23,9 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
 
   const port = Number(process.env.PORT ?? 3000);
   // Loopback by default: POST /counters is an unauthenticated write (auth is out of scope by charter),
-  // so listening beyond this machine is an explicit opt-in (HOST=0.0.0.0, for example in a container).
-  const host = process.env.HOST || '127.0.0.1';
+  // so listening beyond this machine is an explicit opt-in (TALLY_HOST=0.0.0.0, for example in a container).
+  // Not `HOST`: csh/tcsh and some CI images export HOST as the machine's hostname.
+  const host = process.env.TALLY_HOST || '127.0.0.1';
   const server = createServer(createApp(store));
   server.listen(port, host, () => console.log(`listening on ${host}:${port}`));
   const shutdown = () => server.close(() => { store.close(); process.exit(0); });

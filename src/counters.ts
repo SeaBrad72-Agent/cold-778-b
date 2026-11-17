@@ -3,6 +3,7 @@
 import express, { Router } from 'express';
 import { z } from 'zod';
 import { CounterExistsError, type CounterStore } from './store.js';
+import { routeName } from './route-name.js';
 
 /** 1-64 chars of lowercase letters, digits and hyphens, not starting with a hyphen. */
 export const NAME = z
@@ -20,7 +21,8 @@ function firstIssue(err: z.ZodError): string {
 export function countersRouter(store: CounterStore): Router {
   const router = Router();
 
-  router.post('/', express.json({ limit: '1kb', strict: false }), (req, res) => {
+  // routeName runs BEFORE the body parser, so a 400/413/415 from parsing still carries the route's name.
+  router.post('/', routeName('/counters'), express.json({ limit: '1kb', strict: false }), (req, res) => {
     const parsed = CreateBody.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: firstIssue(parsed.error) });
@@ -37,7 +39,7 @@ export function countersRouter(store: CounterStore): Router {
     }
   });
 
-  router.get('/:name', (req, res) => {
+  router.get('/:name', routeName('/counters/:name'), (req, res) => {
     const parsed = NAME.safeParse(req.params.name);
     if (!parsed.success) {
       res.status(400).json({ error: firstIssue(parsed.error) });
