@@ -23,7 +23,12 @@ Then, from another terminal:
 ```
 curl -s -X POST localhost:3000/counters -H 'Content-Type: application/json' -d '{"name":"coffee-runs"}'
 curl -s localhost:3000/counters/coffee-runs
+curl -s -X POST localhost:3000/counters/coffee-runs/increment
+curl -s -X POST localhost:3000/counters/coffee-runs/increment -H 'Content-Type: application/json' -d '{"by":3}'
+curl -s -X POST localhost:3000/counters/coffee-runs/decrement
 ```
+
+A counter never goes below zero: a decrement that would take it there answers `409` and leaves the value unchanged.
 
 | Variable | Default | What it does |
 |---|---|---|
