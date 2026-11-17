@@ -8,6 +8,7 @@ import { appendFileSync } from 'node:fs';
 import { health } from './health.js';
 import { isEnabled } from './flags.js';
 import type { CounterStore } from './store.js';
+import { countersRouter } from './counters.js';
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -117,7 +118,6 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 };
 
 export function createApp(store: CounterStore): Express {
-  void store; // mounted by the counters router (COLD-2 plan task 4)
   const app = express();
   app.disable('x-powered-by');
   const metrics = createMetrics();
@@ -133,6 +133,7 @@ export function createApp(store: CounterStore): Express {
   app.get('/greeting', (_req, res) => {
     res.json({ greeting: isEnabled('newGreeting') ? 'Hello, world! (new)' : 'Hello, world!' });
   });
+  app.use('/counters', countersRouter(store));
 
   app.use((_req, res) => {
     res.status(404).json({ error: 'not found' });
