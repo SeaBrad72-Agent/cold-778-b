@@ -32,4 +32,4 @@ Ordinary, size S: short design doc with a one-line lens summary, this plan, the 
 
 ## Verification plan
 
-Before the push: lint, type-check, `npm run test:coverage` (every contract row and each design-promised control has a test that was seen failing first; coverage ≥80%), build. A green proves the contract and, through a two-process test that a read-then-write store fails, that concurrent bumps lose no update on a local file; not on a network filesystem (design §Honest ceiling). CI re-runs the same gates plus the kit's required contexts.
+Before the push: lint, type-check, `npm run test:coverage` (every contract row and each design-promised control has a test that was seen failing first; coverage ≥80%), build. A green proves the contract and, through a rendezvous two-process test that a read-then-write store failed 20 of 20 times (measured), that concurrent bumps lose no update on a local file. It is a timing-based detector, not a proof, and it says nothing about a network filesystem (design §Honest ceiling). CI re-runs the same gates plus the kit's required contexts.

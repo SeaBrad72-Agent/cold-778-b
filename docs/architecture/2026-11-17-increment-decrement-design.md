@@ -49,7 +49,7 @@ lenses: no findings except **security**: a new unauthenticated write (bump); it 
 
 ## Honest ceiling
 
-The no-lost-update test runs two OS processes that bump one local file at the same time (2,000 bumps each). It proves the single guarded statement loses no update: a read-then-write variant of the same harness lost 1,887 of 4,000 updates, measured on 2026-11-17. It does not prove behaviour on a network filesystem, which is out of scope.
+The no-lost-update test runs two OS processes on one local file, 2,000 bumps each. A rendezvous releases them together: each child writes a ready file after opening its connection, and the parent writes the go file only when both are ready. It proves the single guarded statement loses no update. Measured on 2026-11-17 with the same harness: a read-then-write variant failed the test in **20 of 20 runs** (it ended at 2,000 every time), and the real store passed 5 of 5. The detector is still timing-based, not a formal proof. An earlier barrier, written before the children loaded, was a no-op: the reviewer measured 1 miss in 10. It does not prove behaviour on a network filesystem, which is out of scope.
 
 The error-classifying read after a refused bump runs outside the UPDATE. Across processes, a counter created or deleted by another connection in that window can change which refusal is reported (404 or 409). It never affects a write, and it cannot happen within one process.
 
@@ -66,3 +66,9 @@ The error-classifying read after a refused bump runs outside the UPDATE. Across 
   - Consequence: a browser page on another host cannot write to tally even when `TALLY_HOST=0.0.0.0`. There is no web UI in scope, so nothing breaks; a future UI slice must revisit this list.
   - Design-promised control: **a cross-site browser write never changes a counter**, discharged by `test/app.test.ts::refuses a cross-site write with 403 and changes nothing`, proven load-bearing (weakening the check to Origin-equals-Host let the rebinding case through, and the test failed).
   - Not built: a CHECK constraint on the column (the security note, defence in depth only). The classifying-read window (security L2) is in the Honest ceiling and must be revisited by the delete slice.
+- 2026-11-17, reviewer round 2 and security round 2 (no new mechanism):
+  - The two-process test's barrier is now a real rendezvous (reviewer I1-R2); see Honest ceiling.
+  - `Sec-Fetch-Site` is refused unless it is absent, `same-origin` or `none` (security L3: mixed case, joined or unknown values were let through).
+  - A refused cross-site write is traced as `<METHOD> cross-site-refused` (reviewer m1).
+  - Accepted as is: the Origin/Host comparison is case-sensitive and port-literal (reviewer m2; every mismatch fails closed), and an empty chunked request is treated as a body (reviewer m3; fails closed with 415).
+  - Carried: an allowlist for the `Host` header, against DNS rebinding for reads and for Origin-less writes from old browsers, is **COLD-7** (security L4).

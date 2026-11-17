@@ -169,8 +169,9 @@ const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 function isCrossSiteWrite(req: Request): boolean {
   if (SAFE_METHODS.has(req.method)) return false;
+  // Refuse unless known: only absent (curl, scripts), `same-origin` and `none` (typed by the user) pass.
   const site = req.get('sec-fetch-site');
-  if (site === 'cross-site' || site === 'same-site') return true;
+  if (site !== undefined && site !== 'same-origin' && site !== 'none') return true;
   const origin = req.get('origin');
   if (origin === undefined) return false;
   let url: URL;
@@ -184,6 +185,7 @@ function isCrossSiteWrite(req: Request): boolean {
 
 const refuseCrossSiteWrites: RequestHandler = (req, res, next) => {
   if (isCrossSiteWrite(req)) {
+    res.locals.route = 'cross-site-refused'; // a fixed span name, so refusals are findable in traces
     res.status(403).json({ error: 'cross-site request refused' });
     return;
   }

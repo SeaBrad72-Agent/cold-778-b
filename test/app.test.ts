@@ -31,6 +31,10 @@ describe('app', () => {
       ['an opaque Origin (sandboxed page)', { Origin: 'null' }],
       ['DNS rebinding: Origin equals Host but is not loopback', { Origin: 'http://evil.example:3000', Host: 'evil.example:3000' }],
       ['a loopback Origin on another port', { Origin: 'http://localhost:9999', Host: 'localhost:3000' }],
+      // Refuse unless known (security round 2, L3): any Sec-Fetch-Site other than same-origin or none.
+      ['an unknown Sec-Fetch-Site value', { 'Sec-Fetch-Site': 'cross-site-ish' }],
+      ['a mixed-case Sec-Fetch-Site', { 'Sec-Fetch-Site': 'Cross-Site' }],
+      ['two Sec-Fetch-Site values joined', { 'Sec-Fetch-Site': 'same-origin, cross-site' }],
     ])('refuses a cross-site write with 403 and changes nothing: %s', async (_label, headers) => {
       const store = seeded();
       const app = createApp(store);
@@ -55,6 +59,17 @@ describe('app', () => {
       const res = await request(createApp(store)).post('/counters/coffee/increment').set(headers as Record<string, string>);
       expect(res.status).toBe(200);
       expect(store.get('coffee')).toEqual({ name: 'coffee', value: 4 });
+    });
+
+    it('names the refused request in its span, so the 403 is findable in traces', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'tally-otel-'));
+      dirs.push(dir);
+      const file = join(dir, 'spans.jsonl');
+      process.env.OTEL_TRACE_FILE = file;
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      await request(createApp(seeded())).post('/counters/coffee/increment').set('Sec-Fetch-Site', 'cross-site');
+      const span = JSON.parse(readFileSync(file, 'utf8').trim());
+      expect(span.name).toBe('POST cross-site-refused');
     });
 
     it('leaves reads alone: a cross-site GET is answered', async () => {

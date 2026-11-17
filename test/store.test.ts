@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { spawn } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { bumpFromTwoProcesses } from './helpers/two-process.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -13,10 +12,6 @@ import {
   sqliteStore,
   type CounterStore,
 } from '../src/store.js';
-
-const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const TSX = join(ROOT, 'node_modules/tsx/dist/esm/index.mjs');
-const BUMP_MANY = join(ROOT, 'test/helpers/bump-many.ts');
 
 describe('sqliteStore', () => {
   const open: CounterStore[] = [];
@@ -117,28 +112,19 @@ describe('sqliteStore', () => {
       expect(store.get('nope')).toBeUndefined();
     });
 
-    // Two OS processes bump the same file at the same time. A read-then-write store loses updates
-    // here (shown by hand with the helper's `mutant` mode); the store's single guarded UPDATE does not.
+    // Two OS processes, released together by a rendezvous, bump the same file at the same time. A
+    // read-then-write store loses updates here (the helper's `mutant` mode, measured by hand); the
+    // store's single guarded UPDATE does not.
     it('two processes bumping the same file concurrently lose no update', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'tally-store-'));
       dirs.push(dir);
       const path = join(dir, 'tally.db');
-      const go = join(dir, 'go');
       const setup = sqliteStore(path);
       setup.create('shared');
       setup.close();
 
       const perChild = 2000;
-      const run = () =>
-        new Promise<number | null>((resolve) => {
-          const child = spawn(process.execPath, ['--import', TSX, BUMP_MANY, path, 'shared', String(perChild), go], {
-            stdio: 'inherit',
-          });
-          child.on('exit', resolve);
-        });
-      const children = [run(), run()];
-      writeFileSync(go, '');
-      expect(await Promise.all(children)).toEqual([0, 0]);
+      expect(await bumpFromTwoProcesses(path, 'shared', perChild)).toEqual([0, 0]);
 
       const check = sqliteStore(path);
       open.push(check);
