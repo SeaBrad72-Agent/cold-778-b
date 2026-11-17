@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/app.js';
-import { sqliteStore, type CounterStore } from '../src/store.js';
+import { sqliteStore } from '../src/store.js';
+import { failingStore } from './fakes.js';
 
 describe('app', () => {
   const dirs: string[] = [];
@@ -12,6 +13,72 @@ describe('app', () => {
     vi.restoreAllMocks();
     delete process.env.OTEL_TRACE_FILE;
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  describe('cross-site write refusal (COLD-6 security M1, owner decision 2026-11-17)', () => {
+    const seeded = () => {
+      const store = sqliteStore(':memory:');
+      store.create('coffee');
+      store.increment('coffee', 3);
+      return store;
+    };
+
+    // Each attack shape a browser can produce; every one must leave the value unchanged.
+    it.each([
+      ['Sec-Fetch-Site: cross-site, no body (no-cors fetch)', { 'Sec-Fetch-Site': 'cross-site' }],
+      ['Sec-Fetch-Site: same-site', { 'Sec-Fetch-Site': 'same-site' }],
+      ['a foreign Origin', { Origin: 'https://evil.example' }],
+      ['an opaque Origin (sandboxed page)', { Origin: 'null' }],
+      ['DNS rebinding: Origin equals Host but is not loopback', { Origin: 'http://evil.example:3000', Host: 'evil.example:3000' }],
+      ['a loopback Origin on another port', { Origin: 'http://localhost:9999', Host: 'localhost:3000' }],
+      // Refuse unless known (security round 2, L3): any Sec-Fetch-Site other than same-origin or none.
+      ['an unknown Sec-Fetch-Site value', { 'Sec-Fetch-Site': 'cross-site-ish' }],
+      ['a mixed-case Sec-Fetch-Site', { 'Sec-Fetch-Site': 'Cross-Site' }],
+      ['two Sec-Fetch-Site values joined', { 'Sec-Fetch-Site': 'same-origin, cross-site' }],
+    ])('refuses a cross-site write with 403 and changes nothing: %s', async (_label, headers) => {
+      const store = seeded();
+      const app = createApp(store);
+      for (const path of ['/counters/coffee/decrement', '/counters/coffee/increment']) {
+        const res = await request(app).post(path).set(headers as Record<string, string>);
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual({ error: 'cross-site request refused' });
+      }
+      const create = await request(app).post('/counters').set(headers as Record<string, string>).send({ name: 'x' });
+      expect(create.status).toBe(403);
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 3 });
+      expect(store.get('x')).toBeUndefined();
+    });
+
+    it.each([
+      ['no browser headers (curl, a script)', {}],
+      ['Sec-Fetch-Site: same-origin from a loopback page', { 'Sec-Fetch-Site': 'same-origin', Origin: 'http://localhost:3000', Host: 'localhost:3000' }],
+      ['Sec-Fetch-Site: none (typed by the user)', { 'Sec-Fetch-Site': 'none' }],
+      ['a 127.0.0.1 Origin matching Host', { Origin: 'http://127.0.0.1:3000', Host: '127.0.0.1:3000' }],
+    ])('allows a write that is not cross-site: %s', async (_label, headers) => {
+      const store = seeded();
+      const res = await request(createApp(store)).post('/counters/coffee/increment').set(headers as Record<string, string>);
+      expect(res.status).toBe(200);
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 4 });
+    });
+
+    it('names the refused request in its span, so the 403 is findable in traces', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'tally-otel-'));
+      dirs.push(dir);
+      const file = join(dir, 'spans.jsonl');
+      process.env.OTEL_TRACE_FILE = file;
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      await request(createApp(seeded())).post('/counters/coffee/increment').set('Sec-Fetch-Site', 'cross-site');
+      const span = JSON.parse(readFileSync(file, 'utf8').trim());
+      expect(span.name).toBe('POST cross-site-refused');
+    });
+
+    it('leaves reads alone: a cross-site GET is answered', async () => {
+      const store = seeded();
+      const res = await request(createApp(store))
+        .get('/counters/coffee')
+        .set({ 'Sec-Fetch-Site': 'cross-site', Origin: 'https://evil.example' });
+      expect(res.status).toBe(200);
+    });
   });
 
   it('counts handled requests on /metrics by method and status', async () => {
@@ -27,16 +94,7 @@ describe('app', () => {
   });
 
   it('answers 500 with no internal detail when the store fails unexpectedly', async () => {
-    const failing: CounterStore = {
-      create() {
-        throw new Error('disk I/O error at /secret/path/tally.db');
-      },
-      get() {
-        throw new Error('disk I/O error at /secret/path/tally.db');
-      },
-      close() {},
-    };
-    const app = createApp(failing);
+    const app = createApp(failingStore('disk I/O error at /secret/path/tally.db'));
     const post = await request(app).post('/counters').send({ name: 'boom' });
     expect(post.status).toBe(500);
     expect(post.body).toEqual({ error: 'internal error' });
@@ -51,16 +109,7 @@ describe('app', () => {
     vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
       if (typeof line === 'string' && line.startsWith('{"ts"')) lines.push(JSON.parse(line));
     });
-    const failing: CounterStore = {
-      create() {
-        throw new Error('disk I/O error');
-      },
-      get() {
-        return undefined;
-      },
-      close() {},
-    };
-    await request(createApp(failing)).post('/counters').set('x-request-id', 'req-500').send({ name: 'boom' });
+    await request(createApp(failingStore('disk I/O error'))).post('/counters').set('x-request-id', 'req-500').send({ name: 'boom' });
     const errors = lines.filter((l) => l.level === 'error');
     expect(errors).toHaveLength(2);
     const cause = errors.find((l) => l.event === 'unhandled_error');
@@ -139,22 +188,17 @@ describe('app', () => {
     const file = join(dir, 'spans.jsonl');
     process.env.OTEL_TRACE_FILE = file;
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    const failing: CounterStore = {
-      create() {
-        throw new Error('disk I/O error');
-      },
-      get() {
-        throw new Error('disk I/O error');
-      },
-      close() {},
-    };
-    const app = createApp(failing);
+    const app = createApp(failingStore('disk I/O error'));
     await request(app).post('/counters').send({ name: 'boom' });
     await request(app).get('/counters/boom');
+    await request(app).post('/counters/boom/increment');
+    await request(app).post('/counters/boom/decrement').send({ by: 2 });
     const spans = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     expect(spans.map((s) => [s.name, s.status.code])).toEqual([
       ['POST /counters', 'ERROR'],
       ['GET /counters/:name', 'ERROR'],
+      ['POST /counters/:name/increment', 'ERROR'],
+      ['POST /counters/:name/decrement', 'ERROR'],
     ]);
   });
 

@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
 import type { Express } from 'express';
 import { createApp } from '../src/app.js';
-import { sqliteStore, type CounterStore } from '../src/store.js';
+import { CounterBoundError, sqliteStore, type CounterStore } from '../src/store.js';
+import { tripwireStore } from './fakes.js';
 
 describe('counters API', () => {
   let store: CounterStore;
@@ -64,18 +65,7 @@ describe('counters API', () => {
     // The design-promised control: an invalid name is refused BEFORE any storage call.
     it.each(invalidNames)('never calls the store for an invalid name: %s', async (_label, name) => {
       const calls: string[] = [];
-      const tripwire: CounterStore = {
-        create(n) {
-          calls.push(`create:${n}`);
-          throw new Error('store must not be called');
-        },
-        get(n) {
-          calls.push(`get:${n}`);
-          throw new Error('store must not be called');
-        },
-        close() {},
-      };
-      const guarded = createApp(tripwire);
+      const guarded = createApp(tripwireStore(calls));
       const post = await request(guarded).post('/counters').send({ name });
       expect(post.status).toBe(400);
       if (typeof name === 'string') {
@@ -204,5 +194,158 @@ describe('counters API', () => {
     expect(res.headers['content-security-policy']).toBe("default-src 'none'");
     expect(res.headers['referrer-policy']).toBe('no-referrer');
     expect(res.headers['x-powered-by']).toBeUndefined();
+  });
+
+  describe('POST /counters/:name/increment and /decrement', () => {
+    beforeEach(() => {
+      store.create('coffee');
+    });
+
+    it('increments by 1 with no body and answers 200 with the new value', async () => {
+      const res = await request(app).post('/counters/coffee/increment');
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('application/json');
+      expect(res.body).toEqual({ name: 'coffee', value: 1 });
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 1 });
+    });
+
+    it('increments by n with {"by": n}, and by 1 with an empty object', async () => {
+      expect((await request(app).post('/counters/coffee/increment').send({ by: 5 })).body).toEqual({
+        name: 'coffee',
+        value: 5,
+      });
+      expect((await request(app).post('/counters/coffee/increment').send({})).body).toEqual({
+        name: 'coffee',
+        value: 6,
+      });
+    });
+
+    it('decrements by 1 and by n, down to exactly zero', async () => {
+      store.increment('coffee', 4);
+      expect((await request(app).post('/counters/coffee/decrement')).body).toEqual({ name: 'coffee', value: 3 });
+      const res = await request(app).post('/counters/coffee/decrement').send({ by: 3 });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ name: 'coffee', value: 0 });
+    });
+
+    it('refuses a decrement below zero with 409 and keeps the value', async () => {
+      store.increment('coffee', 2);
+      const res = await request(app).post('/counters/coffee/decrement').send({ by: 3 });
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'counter cannot go below zero' });
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 2 });
+    });
+
+    it('refuses an increment past the maximum with 409', async () => {
+      const capped: CounterStore = {
+        ...store,
+        increment(name) {
+          throw new CounterBoundError(name, 'max');
+        },
+      };
+      const res = await request(createApp(capped)).post('/counters/coffee/increment');
+      expect(res.status).toBe(409);
+      expect(res.body).toEqual({ error: 'counter would exceed the maximum value' });
+    });
+
+    it.each(['increment', 'decrement'])('answers 404 for an unknown counter on %s', async (op) => {
+      const res = await request(app).post(`/counters/nope/${op}`);
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: 'counter not found' });
+    });
+
+    const invalidBy: Array<[string, unknown]> = [
+      ['zero', 0],
+      ['negative', -1],
+      ['a fraction', 1.5],
+      ['over a million', 1_000_001],
+      ['a numeric string', '5'],
+      ['null', null],
+      ['a boolean', true],
+      ['an array', [1]],
+      ['an object', { n: 1 }],
+      ['a huge number', 1e308],
+    ];
+    it.each(invalidBy)('rejects an invalid "by" with 400 and changes nothing: %s', async (_label, by) => {
+      for (const op of ['increment', 'decrement']) {
+        const res = await request(app).post(`/counters/coffee/${op}`).send({ by });
+        expect(res.status).toBe(400);
+        expect(typeof res.body.error).toBe('string');
+      }
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 0 });
+    });
+
+    it('accepts the largest valid "by" (1,000,000)', async () => {
+      const res = await request(app).post('/counters/coffee/increment').send({ by: 1_000_000 });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ name: 'coffee', value: 1_000_000 });
+    });
+
+    it('rejects a JSON body that is not an object with 400', async () => {
+      const res = await request(app)
+        .post('/counters/coffee/increment')
+        .set('Content-Type', 'application/json')
+        .send('[5]');
+      expect(res.status).toBe(400);
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 0 });
+    });
+
+    it.each(['increment', 'decrement'])('rejects a JSON null body on %s with 400 and changes nothing', async (op) => {
+      store.increment('coffee', 5);
+      const res = await request(app).post(`/counters/coffee/${op}`).set('Content-Type', 'application/json').send('null');
+      expect(res.status).toBe(400);
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 5 });
+    });
+
+    // A client that forgets the JSON header must not get a silent +1 for its {"by": 5}.
+    it.each([
+      ['text/plain', 'text/plain'],
+      ['a form body (curl -d without -H)', 'application/x-www-form-urlencoded'],
+      ['no content type', undefined],
+    ])('refuses a non-JSON body (%s) with 415 and changes nothing', async (_label, type) => {
+      store.increment('coffee', 5);
+      for (const op of ['increment', 'decrement']) {
+        const req = request(app).post(`/counters/coffee/${op}`);
+        if (type) req.set('Content-Type', type);
+        else req.unset('Content-Type');
+        const res = await req.send('{"by":5}');
+        expect(res.status).toBe(415);
+        expect(res.body).toEqual({ error: 'unsupported content type or encoding' });
+      }
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 5 });
+    });
+
+    it('refuses a body over 1kb with 413', async () => {
+      const res = await request(app)
+        .post('/counters/coffee/increment')
+        .send({ by: 1, padding: 'x'.repeat(2048) });
+      expect(res.status).toBe(413);
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 0 });
+    });
+
+    // The design-promised control: an invalid name or "by" never reaches storage.
+    it.each([
+      ['an uppercase name', 'Coffee', { by: 1 }],
+      ['a leading-hyphen name', '-coffee', { by: 1 }],
+      ['an encoded newline in the name', 'abc%0A', { by: 1 }],
+      ['a zero by', 'coffee', { by: 0 }],
+      ['a string by', 'coffee', { by: '1' }],
+      ['a fractional by', 'coffee', { by: 0.5 }],
+    ])('never calls the store for an invalid bump: %s', async (_label, name, body) => {
+      const calls: string[] = [];
+      const guarded = createApp(tripwireStore(calls));
+      for (const op of ['increment', 'decrement']) {
+        const res = await request(guarded).post(`/counters/${name}/${op}`).send(body);
+        expect(res.status).toBe(400);
+      }
+      expect(calls).toEqual([]);
+    });
+
+    it('sends the security headers on bump responses, including a 409', async () => {
+      const res = await request(app).post('/counters/coffee/decrement');
+      expect(res.status).toBe(409);
+      expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['content-security-policy']).toBe("default-src 'none'");
+    });
   });
 });

@@ -2,7 +2,13 @@
 // per-request telemetry (request id, structured log line, OTel-semantic span, Prometheus counters) and
 // security headers, the scaffold's routes (/healthz, /metrics, /greeting), and a JSON 404/error tail.
 // server.ts is the entrypoint that opens the real store and listens; tests pass a ':memory:' store.
-import express, { type ErrorRequestHandler, type Express, type RequestHandler, type Response } from 'express';
+import express, {
+  type ErrorRequestHandler,
+  type Express,
+  type Request,
+  type RequestHandler,
+  type Response,
+} from 'express';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { health } from './health.js';
@@ -152,11 +158,46 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   res.status(status).json({ error: clientMessage(status, err?.type) });
 };
 
+// Cross-site write refusal (COLD-6 security M1; owner decision 2026-11-17). The write API has no login
+// (charter), so a page a person visits must not be able to drive it through their browser: a no-body
+// POST is a "simple" request a browser sends cross-site without asking first. Browsers mark such
+// requests (Sec-Fetch-Site, Origin); curl and scripts send neither header and are unaffected.
+// An Origin must also be a LOOPBACK name equal to Host: DNS rebinding makes Origin and Host both read
+// `evil.example`, so "Origin equals Host" alone would let it through.
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+function isCrossSiteWrite(req: Request): boolean {
+  if (SAFE_METHODS.has(req.method)) return false;
+  // Refuse unless known: only absent (curl, scripts), `same-origin` and `none` (typed by the user) pass.
+  const site = req.get('sec-fetch-site');
+  if (site !== undefined && site !== 'same-origin' && site !== 'none') return true;
+  const origin = req.get('origin');
+  if (origin === undefined) return false;
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return true; // `null` (a sandboxed or opaque origin) and anything unparseable
+  }
+  return !LOOPBACK_HOSTNAMES.has(url.hostname) || url.host !== req.get('host');
+}
+
+const refuseCrossSiteWrites: RequestHandler = (req, res, next) => {
+  if (isCrossSiteWrite(req)) {
+    res.locals.route = 'cross-site-refused'; // a fixed span name, so refusals are findable in traces
+    res.status(403).json({ error: 'cross-site request refused' });
+    return;
+  }
+  next();
+};
+
 export function createApp(store: CounterStore): Express {
   const app = express();
   app.disable('x-powered-by');
   const metrics = createMetrics();
   app.use(telemetry(metrics));
+  app.use(refuseCrossSiteWrites);
 
   app.get('/healthz', routeName('/healthz'), (_req, res) => {
     res.json(health());
