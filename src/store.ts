@@ -13,7 +13,31 @@ export interface CounterStore {
   create(name: string): Counter;
   /** The counter, or undefined when no counter has that name. */
   get(name: string): Counter | undefined;
+  /** Add `by` (>= 1) atomically. Throws CounterNotFoundError, or CounterBoundError past MAX_VALUE. */
+  increment(name: string, by: number): Counter;
+  /** Subtract `by` (>= 1) atomically. Throws CounterNotFoundError, or CounterBoundError below zero. */
+  decrement(name: string, by: number): Counter;
   close(): void;
+}
+
+/** The largest value a counter may hold: beyond it a JS number can no longer represent every integer. */
+export const MAX_VALUE = Number.MAX_SAFE_INTEGER;
+
+export class CounterNotFoundError extends Error {
+  constructor(name: string) {
+    super(`counter not found: ${name}`);
+    this.name = 'CounterNotFoundError';
+  }
+}
+
+export class CounterBoundError extends Error {
+  constructor(
+    name: string,
+    readonly bound: 'zero' | 'max',
+  ) {
+    super(`counter ${bound === 'zero' ? 'cannot go below zero' : 'would exceed the maximum value'}: ${name}`);
+    this.name = 'CounterBoundError';
+  }
 }
 
 export class CounterExistsError extends Error {
@@ -39,6 +63,16 @@ export function sqliteStore(path: string): CounterStore {
   );
   const insert = db.prepare('INSERT INTO counters (name, value) VALUES (?, 0)');
   const select = db.prepare('SELECT name, value FROM counters WHERE name = ?');
+  // One guarded statement per bump: the bound is checked and the value changed in the same UPDATE, so
+  // concurrent bumps never lose an update and a refused bump changes nothing.
+  const up = db.prepare('UPDATE counters SET value = value + ? WHERE name = ? AND value <= ? RETURNING value');
+  const down = db.prepare('UPDATE counters SET value = value - ? WHERE name = ? AND value >= ? RETURNING value');
+
+  // No row came back: the counter is missing, or the bound held. This read only names the error.
+  const refused = (name: string, bound: 'zero' | 'max'): never => {
+    if (!select.get(name)) throw new CounterNotFoundError(name);
+    throw new CounterBoundError(name, bound);
+  };
 
   return {
     create(name) {
@@ -53,6 +87,16 @@ export function sqliteStore(path: string): CounterStore {
     get(name) {
       const row = select.get(name) as { name: string; value: number } | undefined;
       return row ? { name: row.name, value: Number(row.value) } : undefined;
+    },
+    increment(name, by) {
+      const row = up.get(by, name, MAX_VALUE - by) as { value: number } | undefined;
+      if (!row) return refused(name, 'max');
+      return { name, value: Number(row.value) };
+    },
+    decrement(name, by) {
+      const row = down.get(by, name, by) as { value: number } | undefined;
+      if (!row) return refused(name, 'zero');
+      return { name, value: Number(row.value) };
     },
     close() {
       db.close();

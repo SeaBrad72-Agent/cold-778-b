@@ -3,6 +3,7 @@ import request from 'supertest';
 import type { Express } from 'express';
 import { createApp } from '../src/app.js';
 import { sqliteStore, type CounterStore } from '../src/store.js';
+import { tripwireStore } from './fakes.js';
 
 describe('counters API', () => {
   let store: CounterStore;
@@ -64,18 +65,7 @@ describe('counters API', () => {
     // The design-promised control: an invalid name is refused BEFORE any storage call.
     it.each(invalidNames)('never calls the store for an invalid name: %s', async (_label, name) => {
       const calls: string[] = [];
-      const tripwire: CounterStore = {
-        create(n) {
-          calls.push(`create:${n}`);
-          throw new Error('store must not be called');
-        },
-        get(n) {
-          calls.push(`get:${n}`);
-          throw new Error('store must not be called');
-        },
-        close() {},
-      };
-      const guarded = createApp(tripwire);
+      const guarded = createApp(tripwireStore(calls));
       const post = await request(guarded).post('/counters').send({ name });
       expect(post.status).toBe(400);
       if (typeof name === 'string') {

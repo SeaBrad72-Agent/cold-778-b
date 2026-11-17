@@ -4,7 +4,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../src/app.js';
-import { sqliteStore, type CounterStore } from '../src/store.js';
+import { sqliteStore } from '../src/store.js';
+import { failingStore } from './fakes.js';
 
 describe('app', () => {
   const dirs: string[] = [];
@@ -27,16 +28,7 @@ describe('app', () => {
   });
 
   it('answers 500 with no internal detail when the store fails unexpectedly', async () => {
-    const failing: CounterStore = {
-      create() {
-        throw new Error('disk I/O error at /secret/path/tally.db');
-      },
-      get() {
-        throw new Error('disk I/O error at /secret/path/tally.db');
-      },
-      close() {},
-    };
-    const app = createApp(failing);
+    const app = createApp(failingStore('disk I/O error at /secret/path/tally.db'));
     const post = await request(app).post('/counters').send({ name: 'boom' });
     expect(post.status).toBe(500);
     expect(post.body).toEqual({ error: 'internal error' });
@@ -51,16 +43,7 @@ describe('app', () => {
     vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
       if (typeof line === 'string' && line.startsWith('{"ts"')) lines.push(JSON.parse(line));
     });
-    const failing: CounterStore = {
-      create() {
-        throw new Error('disk I/O error');
-      },
-      get() {
-        return undefined;
-      },
-      close() {},
-    };
-    await request(createApp(failing)).post('/counters').set('x-request-id', 'req-500').send({ name: 'boom' });
+    await request(createApp(failingStore('disk I/O error'))).post('/counters').set('x-request-id', 'req-500').send({ name: 'boom' });
     const errors = lines.filter((l) => l.level === 'error');
     expect(errors).toHaveLength(2);
     const cause = errors.find((l) => l.event === 'unhandled_error');
@@ -139,16 +122,7 @@ describe('app', () => {
     const file = join(dir, 'spans.jsonl');
     process.env.OTEL_TRACE_FILE = file;
     vi.spyOn(console, 'log').mockImplementation(() => {});
-    const failing: CounterStore = {
-      create() {
-        throw new Error('disk I/O error');
-      },
-      get() {
-        throw new Error('disk I/O error');
-      },
-      close() {},
-    };
-    const app = createApp(failing);
+    const app = createApp(failingStore('disk I/O error'));
     await request(app).post('/counters').send({ name: 'boom' });
     await request(app).get('/counters/boom');
     const spans = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
