@@ -64,18 +64,18 @@ This file holds only what is **specific to this project**.
 
 > Chosen at Inception via a spike; full rationale + alternatives in `docs/architecture/ADR-000-*.md`.
 
-- **Language(s) / runtime:** [...]
-- **Framework(s):** [...]
-- **Data store:** [...]
-- **Testing:** [...]
-- **Deploy target / hosting:** [...]
-- **Key libraries / services:** [...]
+- **Language(s) / runtime:** TypeScript (strict) on Node.js ≥ 24
+- **Framework(s):** Express 5
+- **Data store:** SQLite through Node's built-in `node:sqlite` (file at `TALLY_DB_PATH`, default `./data/tally.db`)
+- **Testing:** Vitest + supertest; coverage gate ≥ 80% (`npm run test:coverage`)
+- **Deploy target / hosting:** none — deployment to production is out of scope (§1)
+- **Key libraries / services:** express, zod (input validation); Jira (COLD) as the board
 
 ## 3. Per-project process configuration
 
 > These are the knobs `DEVELOPMENT-PROCESS.md` says are set per project.
 
-- **Backlog backend** (§6): jira — [link] (mapping: `docs/work-tracking/adapters.md`)
+- **Backlog backend** (§6): jira — https://inflectionsparks.atlassian.net/browse/COLD (mapping: `docs/work-tracking/adapters.md`)
 - **Stack profile** (§2): typescript-node — the kit profile this project was incepted with (`incept --stack`). It determines the scaffold, the emitted CI, and which `profiles/*` survived the export prune. Recorded because it was the **one inception input nothing wrote down**, and a kit update must prune a new export to the same shape to compare it against `kit-base` (`docs/operations/kit-base.md`).
 - **CI platform** (§14): github — the CI platform this project was incepted with (`incept --ci`); github wires `.github/workflows/ci.yml`, gitlab wires `.gitlab-ci.yml`. The contract is the gate-ids, not the platform (`docs/operations/ci-platforms.md`). Recorded because it is an inception **input**: a kit update replays incept over `kit-base` and must wire the *same* platform, or every CI file reads as a conflict (`docs/operations/kit-base.md`).
 - **DB archetype** (§ archetype): db-backed — whether inception kept the reference DB archetype (default) or ran `incept --no-db`, which strips the `kit:db-backed` CI region, the `.db-backed` marker, the DB/Redis `.env.example` lines and `scripts/dr-drill.sh`. Recorded for the same reason as the CI platform: it is an inception **input**, and after the fact the tree can only be *guessed* at (`docs/operations/kit-base.md`).
@@ -86,7 +86,7 @@ This file holds only what is **specific to this project**.
 - **Operator fluency** (§onboarding): [Novice / Adjacent / Practitioner] — the human operator's enterprise-SDLC experience; the agent adapts its assistance accordingly (the "New to enterprise SDLC?" section of `START-HERE.md`; behaviour in `docs/operations/operator-fluency.md`).
 - **Process mode** (§ ceremony): lean — how much ceremony incept scaffolds + surfaces (ceremony only; solo-vs-team governance is the separate `enforce_admins` / `docs/operations/review-lane.md` axis). Does **not** change which controls are ENFORCED: every gate keys on its detected trigger (Dockerfile, `evals/`, data surface, classification), never on this field.
 - **Governance** (§ solo/team): team — solo = one account: the declaring merge is the owner's, and from then on the agent merges on the owner's recorded GO (`enforce_admins:false` until `branch-protection-apply.sh --replace` writes the solo-agent profile); team = non-author approval + second-reviewer SoD (`enforce_admins:true`). Enforced server-side (branch protection), not by this field; this records the fork chosen at Inception (`docs/operations/review-lane.md`).
-- **Branch protection** (§branch-protection): [github-verified | attested: <host + mechanism>] — how `main` is protected. GitHub is **verified live** at Inception-Done (`conformance/inception-done.sh`); other hosts the kit can't yet query require this **attestation** (`docs/adoption/vc-hosts.md`). Fill deliberately — do not auto-stamp.
+- **Branch protection** (§branch-protection): github-verified — team profile (`enforce_admins:true`, one non-author approval, stale approvals dismissed, last-push approval), six required checks; verified live by `conformance/inception-done.sh --strict` on 2026-11-17 — how `main` is protected. GitHub is **verified live** at Inception-Done (`conformance/inception-done.sh`); other hosts the kit can't yet query require this **attestation** (`docs/adoption/vc-hosts.md`). Fill deliberately — do not auto-stamp.
 - **Target harness(es)** (§harness-neutrality): claude-code — the LLM/agent harness(es) this project runs; each is verified against the boundary contract at Inception (`docs/operations/harness-adapters.md`). Record *why* this harness fits in the Harness fit rationale field below.
 - **Review routing / ownership** (§11): [who/which agent reviews what; CODEOWNERS link]
 - **WIP limits:** [per-stage or global cap]
@@ -99,7 +99,7 @@ This file holds only what is **specific to this project**.
 
 #### Harness fit rationale
 
-[claude-code — why this harness fits — cite a fit dimension: IDE / CI / MCP / multi-agent / native-hooks / offline / model-family …]
+claude-code fits by two dimensions this project measurably uses. **Native hooks:** the kit's PreToolUse guard (`.claude/hooks/guard.sh`) is wired and verified (`inception-done --strict`: "runtime guard wired"), and it refused control-plane edits from the real checkout throughout the build. **Multi-agent:** typed `reviewer` and `security` seats (`agents/*.agent.md`) ran in fresh contexts on every PR, in parallel with the conductor.
 
 ### Model neutrality
 
@@ -115,12 +115,12 @@ This file holds only what is **specific to this project**.
 
 | Function | Who/what |
 |----------|----------|
-| Intent owner | [...] |
-| Lead / integrator | [...] |
-| Builder(s) | [...] |
-| Reviewer(s) | [...] |
-| On-call / operator | [...] |
-| Security owner | [...] |
+| Intent owner | @SeaBrad72 |
+| Lead / integrator | @SeaBrad72 — gives every merge GO; the agent actuates (`actuate`, or `land` for control-plane) |
+| Builder(s) | the conductor agent (a Claude Code session; forge account SeaBrad72-Agent, push only) |
+| Reviewer(s) | the `reviewer` and `security` seats (`agents/*.agent.md`, fresh contexts), plus @SeaBrad72's non-author Approve on every PR |
+| On-call / operator | n/a — no deployment (§1) |
+| Security owner | @SeaBrad72 |
 
 ## 5. Quickstart
 
@@ -128,13 +128,13 @@ This file holds only what is **specific to this project**.
 
 ```bash
 # install
-[...]
-# run locally
-[...]
+npm ci
+# run locally (http://127.0.0.1:3000; settings in README.md)
+npm run build && npm start
 # test
-[...]
+npm test
 # build
-[...]
+npm run build
 ```
 
 ## 6. Project conventions & gotchas
@@ -146,10 +146,10 @@ This file holds only what is **specific to this project**.
 
 ## 7. Key references
 
-- **Repo:** [link]
-- **Live / staging URLs:** [links]
-- **Backlog / board:** [link]
-- **Roadmap:** [link]
+- **Repo:** https://github.com/SeaBrad72/cold-778-b
+- **Live / staging URLs:** none — no deployment (§1)
+- **Backlog / board:** https://inflectionsparks.atlassian.net/browse/COLD
+- **Roadmap:** the charter's scope (§1) is built; carried work is on the COLD board
 - **RUNBOOK:** `./RUNBOOK.md`
 - **Running more than one session?** Read `agents/orchestrator.agent.md` (the conductor): checkout custody, the push slot, GO relays, pinned review checkouts.
 
