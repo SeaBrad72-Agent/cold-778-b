@@ -38,6 +38,7 @@ Reviewer: reviewer seat (agents/reviewer.agent.md, fresh context, claude-opus-5-
 | S1-L5 — the new setting is missing from .env.example and RUNBOOK | README.md:31 | Low | accepted — carried as COLD-3 (an owner edit; the agent may not read .env.example), card updated by board.sh edit, proven by post-read |
 | S2-LA — some TALLY_HOST values crashed startup with a raw TypeError | src/config.ts:55 | Low | fixed 3c19a00 |
 | S2-LB — the asterisk-target branch had no test | src/app.ts:222 | Low | fixed 3c19a00 |
+| CI-1 — CI's SAST (Semgrep p/default) failed on cc85816; the log was unreadable from the sandbox, so the cause is inferred as the two runtime-built `new RegExp(...)` patterns this PR introduced (the only two in src/ and test/) | src/config.ts:20 | Low | fixed (this commit) — both replaced by literal patterns, behaviour unchanged (322/322); the next CI run is the evidence |
 
 ## Design-promised controls
 

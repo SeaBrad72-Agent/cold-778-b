@@ -16,8 +16,8 @@ export class ConfigError extends Error {
 }
 
 // A DNS name or IPv4 literal: dot-separated labels of letters, digits and inner hyphens, 1-63 chars each.
-const LABEL = '[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?';
-const HOSTNAME = new RegExp(`^${LABEL}(?:\\.${LABEL})*$`);
+// A literal (not `new RegExp` from a string): SAST flags runtime-built patterns (PR #5, CI Semgrep).
+const HOSTNAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
 
 /** The canonical bracketed form a browser sends in Host, e.g. `[fe80::1]` for `FE80:0:0::1`. A zone id
  * (`%eth0`) is refused: a Host header cannot carry one, so such an entry could never match. */

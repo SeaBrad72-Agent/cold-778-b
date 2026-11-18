@@ -93,7 +93,9 @@ describe('app', () => {
           socket.on('end', () => resolve(data));
           socket.on('error', reject);
         });
-        expect(reply.split('\r\n')[0]).toMatch(new RegExp(`^HTTP/1\\.[01] ${expected} `));
+        const statusLine = reply.split('\r\n')[0];
+        expect(statusLine).toMatch(/^HTTP\/1\.[01] \d{3} /);
+        expect(Number(statusLine.split(' ')[1])).toBe(expected);
       } finally {
         await new Promise<void>((resolve) => server.close(() => resolve()));
       }
