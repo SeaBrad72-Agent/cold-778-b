@@ -99,6 +99,21 @@ export function countersRouter(store: CounterStore): Router {
     res.json(counter);
   });
 
+  // DELETE /counters/:name (COLD-9): 204 with no body, whatever the value; 404 when there is none.
+  // Writes are guarded against cross-site browsers by refuseCrossSiteWrites (app.ts) before this runs.
+  router.delete('/:name', routeName('/counters/:name'), (req, res) => {
+    const parsed = NAME.safeParse(req.params.name);
+    if (!parsed.success) {
+      res.status(400).json({ error: firstIssue(parsed.error) });
+      return;
+    }
+    if (!store.delete(parsed.data)) {
+      res.status(404).json({ error: 'counter not found' });
+      return;
+    }
+    res.status(204).end();
+  });
+
   // POST /counters/:name/increment and /decrement (COLD-6). Name and body are validated before the
   // store; the store applies the bump in one guarded statement and names a refusal by its error type.
   for (const op of ['increment', 'decrement'] as const) {

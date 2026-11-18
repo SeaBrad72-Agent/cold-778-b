@@ -45,6 +45,8 @@ describe('app', () => {
       }
       const create = await request(app).post('/counters').set(headers as Record<string, string>).send({ name: 'x' });
       expect(create.status).toBe(403);
+      const del = await request(app).delete('/counters/coffee').set(headers as Record<string, string>);
+      expect(del.status).toBe(403);
       expect(store.get('coffee')).toEqual({ name: 'coffee', value: 3 });
       expect(store.get('x')).toBeUndefined();
     });
@@ -59,6 +61,15 @@ describe('app', () => {
       const res = await request(createApp(store)).post('/counters/coffee/increment').set(headers as Record<string, string>);
       expect(res.status).toBe(200);
       expect(store.get('coffee')).toEqual({ name: 'coffee', value: 4 });
+    });
+
+    it('allows a same-origin loopback DELETE', async () => {
+      const store = seeded();
+      const res = await request(createApp(store))
+        .delete('/counters/coffee')
+        .set({ 'Sec-Fetch-Site': 'same-origin', Origin: 'http://localhost:3000', Host: 'localhost:3000' });
+      expect(res.status).toBe(204);
+      expect(store.get('coffee')).toBeUndefined();
     });
 
     it('names the refused request in its span, so the 403 is findable in traces', async () => {
@@ -182,6 +193,26 @@ describe('app', () => {
     ]);
   });
 
+  it('names DELETE spans by route on 204, 404 and 400', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tally-otel-'));
+    dirs.push(dir);
+    const file = join(dir, 'spans.jsonl');
+    process.env.OTEL_TRACE_FILE = file;
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    const store = sqliteStore(':memory:');
+    store.create('gone');
+    const app = createApp(store);
+    await request(app).delete('/counters/gone');
+    await request(app).delete('/counters/gone');
+    await request(app).delete('/counters/Gone');
+    const spans = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    expect(spans.map((s) => [s.name, s.attributes['http.response.status_code']])).toEqual([
+      ['DELETE /counters/:name', '204'],
+      ['DELETE /counters/:name', '404'],
+      ['DELETE /counters/:name', '400'],
+    ]);
+  });
+
   it('names a 500 span by its route on both counter routes', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tally-otel-'));
     dirs.push(dir);
@@ -194,6 +225,7 @@ describe('app', () => {
     await request(app).post('/counters/boom/increment');
     await request(app).post('/counters/boom/decrement').send({ by: 2 });
     await request(app).get('/counters?limit=5');
+    await request(app).delete('/counters/boom');
     const spans = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     expect(spans.map((s) => [s.name, s.status.code])).toEqual([
       ['POST /counters', 'ERROR'],
@@ -201,6 +233,7 @@ describe('app', () => {
       ['POST /counters/:name/increment', 'ERROR'],
       ['POST /counters/:name/decrement', 'ERROR'],
       ['GET /counters', 'ERROR'],
+      ['DELETE /counters/:name', 'ERROR'],
     ]);
   });
 
