@@ -17,6 +17,7 @@ import { isEnabled } from './flags.js';
 import type { CounterStore } from './store.js';
 import { countersRouter } from './counters.js';
 import { routeName } from './route-name.js';
+import { LOOPBACK_HOSTS } from './config.js';
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -193,7 +194,35 @@ const refuseCrossSiteWrites: RequestHandler = (req, res, next) => {
   next();
 };
 
-export function createApp(store: CounterStore): Express {
+// Host allowlist (COLD-7). A Host header is `hostname[:port]` and nothing else. It is parsed strictly
+// rather than through a URL parser, which would "normalise" shapes such as `evil@localhost` into an
+// allowed name; anything outside the grammar is refused.
+const HOST_HEADER = /^(?:([a-z0-9.-]+)|(\[[0-9a-f:.]+\]))(?::\d{1,5})?$/;
+
+function hostnameOf(header: string | undefined): string | undefined {
+  const m = header === undefined ? null : HOST_HEADER.exec(header.toLowerCase());
+  return m ? (m[1] ?? m[2]) : undefined;
+}
+
+function refuseUnknownHosts(allowed: readonly string[]): RequestHandler {
+  const set = new Set(allowed.map((h) => h.toLowerCase()));
+  return (req, res, next) => {
+    const host = hostnameOf(req.headers.host);
+    if (host === undefined || !set.has(host)) {
+      res.locals.route = 'host-refused'; // a fixed span name, so refusals are findable in traces
+      res.status(421).json({ error: 'host not allowed' });
+      return;
+    }
+    next();
+  };
+}
+
+export interface AppOptions {
+  /** Hosts the Host header may name (lowercase; IPv6 in brackets). Default: the loopback names only. */
+  allowedHosts?: readonly string[];
+}
+
+export function createApp(store: CounterStore, options: AppOptions = {}): Express {
   const app = express();
   app.disable('x-powered-by');
   // Parse the query with no key cap. Node's default keeps only the first 1000 pairs and silently drops
@@ -202,6 +231,7 @@ export function createApp(store: CounterStore): Express {
   app.set('query parser', (s: string) => querystring.parse(s, '&', '=', { maxKeys: 0 }));
   const metrics = createMetrics();
   app.use(telemetry(metrics));
+  app.use(refuseUnknownHosts(options.allowedHosts ?? LOOPBACK_HOSTS));
   app.use(refuseCrossSiteWrites);
 
   app.get('/healthz', routeName('/healthz'), (_req, res) => {

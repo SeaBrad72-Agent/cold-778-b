@@ -7,6 +7,7 @@ import { createApp } from './app.js';
 import { sqliteStore } from './store.js';
 import { setProvider } from './flags.js';
 import { fileConfigProvider } from './live-provider.js';
+import { ConfigError, allowedHostsFrom } from './config.js';
 
 // Start only when run directly (not when imported by a test).
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
@@ -14,6 +15,17 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   // the running server into the file-config live provider (src/live-provider.ts).
   const flagFile = process.env.FLAG_FILE;
   if (flagFile) setProvider(fileConfigProvider(flagFile));
+
+  // Host allowlist (COLD-7): loopback + TALLY_ALLOWED_HOSTS + a specific TALLY_HOST. A malformed list
+  // stops the server here, before anything is opened, rather than allowing the wrong hosts.
+  let allowedHosts: string[];
+  try {
+    allowedHosts = allowedHostsFrom(process.env);
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    console.error(`tally: ${err.message}`);
+    process.exit(2);
+  }
 
   // Counter storage (ADR-000: SQLite). TALLY_DB_PATH names the file; its directory is created if missing.
   // `||`, not `??`: an EMPTY value would open SQLite's temporary database and lose every counter on restart.
@@ -26,7 +38,7 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   // so listening beyond this machine is an explicit opt-in (TALLY_HOST=0.0.0.0, for example in a container).
   // Not `HOST`: csh/tcsh and some CI images export HOST as the machine's hostname.
   const host = process.env.TALLY_HOST || '127.0.0.1';
-  const server = createServer(createApp(store));
+  const server = createServer(createApp(store, { allowedHosts }));
   server.listen(port, host, () => console.log(`listening on ${host}:${port}`));
   const shutdown = () => server.close(() => { store.close(); process.exit(0); });
   process.on('SIGTERM', shutdown);
