@@ -349,6 +349,67 @@ describe('counters API', () => {
     });
   });
 
+  describe('DELETE /counters/:name', () => {
+    it('answers 204 with no body and the counter is gone from read and list', async () => {
+      store.create('coffee');
+      store.increment('coffee', 7);
+      store.create('bugs');
+      const res = await request(app).delete('/counters/coffee');
+      expect(res.status).toBe(204);
+      expect(res.text).toBe('');
+      expect((await request(app).get('/counters/coffee')).status).toBe(404);
+      expect((await request(app).get('/counters')).body).toEqual({ counters: [{ name: 'bugs', value: 0 }] });
+    });
+
+    it('answers 404 for an unknown counter, and on a second delete', async () => {
+      const unknown = await request(app).delete('/counters/nope');
+      expect(unknown.status).toBe(404);
+      expect(unknown.body).toEqual({ error: 'counter not found' });
+      store.create('once');
+      expect((await request(app).delete('/counters/once')).status).toBe(204);
+      expect((await request(app).delete('/counters/once')).status).toBe(404);
+    });
+
+    it('ignores a request body', async () => {
+      store.create('coffee');
+      const res = await request(app).delete('/counters/coffee').send({ name: 'bugs' });
+      expect(res.status).toBe(204);
+      expect(store.get('coffee')).toBeUndefined();
+    });
+
+    const invalidDeleteNames: Array<[string, string]> = [
+      ['uppercase', 'Coffee'],
+      ['a leading hyphen', '-coffee'],
+      ['65 characters', 'a'.repeat(65)],
+      ['an encoded slash', 'a%2Fb'],
+      ['an encoded NUL', 'a%00b'],
+      ['an encoded newline', 'abc%0A'],
+      ['SQL metacharacters', "x'%20OR%201=1--"],
+      ['a malformed percent-encoding', '%E0%A4%A'],
+    ];
+    it.each(invalidDeleteNames)('answers 400 for an invalid name: %s', async (_label, name) => {
+      const res = await request(app).delete(`/counters/${name}`);
+      expect(res.status).toBe(400);
+      expect(typeof res.body.error).toBe('string');
+    });
+
+    it.each(invalidDeleteNames)('never calls the store for an invalid delete: %s', async (_label, name) => {
+      const calls: string[] = [];
+      const res = await request(createApp(tripwireStore(calls))).delete(`/counters/${name}`);
+      expect(res.status).toBe(400);
+      expect(calls).toEqual([]);
+    });
+
+    it('sends the security headers on a 204 and a 404', async () => {
+      store.create('coffee');
+      for (const path of ['/counters/coffee', '/counters/coffee']) {
+        const res = await request(app).delete(path);
+        expect(res.headers['x-content-type-options']).toBe('nosniff');
+        expect(res.headers['content-security-policy']).toBe("default-src 'none'");
+      }
+    });
+  });
+
   describe('GET /counters (list)', () => {
     it('answers 200 with an empty list when there are no counters', async () => {
       const res = await request(app).get('/counters');

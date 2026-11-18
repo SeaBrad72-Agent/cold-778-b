@@ -28,6 +28,7 @@ curl -s -X POST localhost:3000/counters/coffee-runs/increment -H 'Content-Type: 
 curl -s -X POST localhost:3000/counters/coffee-runs/decrement
 curl -s 'localhost:3000/counters'                          # every counter, by name, 100 per page
 curl -s 'localhost:3000/counters?limit=10&after=bugs'      # the next page: pass the "next" you got back
+curl -s -X DELETE localhost:3000/counters/coffee-runs      # 204; the counter and its value are gone
 ```
 
 A counter never goes below zero: a decrement that would take it there answers `409` and leaves the value unchanged.

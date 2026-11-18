@@ -45,6 +45,8 @@ describe('app', () => {
       }
       const create = await request(app).post('/counters').set(headers as Record<string, string>).send({ name: 'x' });
       expect(create.status).toBe(403);
+      const del = await request(app).delete('/counters/coffee').set(headers as Record<string, string>);
+      expect(del.status).toBe(403);
       expect(store.get('coffee')).toEqual({ name: 'coffee', value: 3 });
       expect(store.get('x')).toBeUndefined();
     });
@@ -194,6 +196,7 @@ describe('app', () => {
     await request(app).post('/counters/boom/increment');
     await request(app).post('/counters/boom/decrement').send({ by: 2 });
     await request(app).get('/counters?limit=5');
+    await request(app).delete('/counters/boom');
     const spans = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     expect(spans.map((s) => [s.name, s.status.code])).toEqual([
       ['POST /counters', 'ERROR'],
@@ -201,6 +204,7 @@ describe('app', () => {
       ['POST /counters/:name/increment', 'ERROR'],
       ['POST /counters/:name/decrement', 'ERROR'],
       ['GET /counters', 'ERROR'],
+      ['DELETE /counters/:name', 'ERROR'],
     ]);
   });
 
