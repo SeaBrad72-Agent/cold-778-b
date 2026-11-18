@@ -1,0 +1,31 @@
+record: promotion GO (approve->execute->log)
+approved-sha: 634f2921b4cea40367ec04ca3b4d4a81506369d1
+approved-tree: c6d15fd0099ab947d750d4bd7a6162a06de3233b
+approved-by: SeaBrad72 [authenticated: github-review]
+go-by: SeaBrad72 [self-asserted]
+gate: merge
+rung: integration
+change-class: control-plane
+kit-row: COLD-10
+scope: 6
+approval-token: "Go"
+basis: (none recorded)
+recorded-at: 2026-11-18T03:07:31Z
+
+land: promotion LAND (approve->execute->log)
+approved-sha: 634f2921b4cea40367ec04ca3b4d4a81506369d1
+approved-tree: c6d15fd0099ab947d750d4bd7a6162a06de3233b
+scope: 6
+kit-row: COLD-10
+go-record-sha256: 77a678d33f2d3bc58a42cfc4f3d349b3cbcd13f72a15ff58e38265e8f97b5563
+batch: serial-20261118T030731Z-6
+member: 1/1
+members: PR-6@634f2921b4ce
+base-sha: 45f693107134e0b4cb32eb40ba91a48c347a1bae
+prefix-prev-tree: 18771bb97db4d3cb8dd453473b309a116572e199
+landed-tree: c6d15fd0099ab947d750d4bd7a6162a06de3233b
+tested-tree: c6d15fd0099ab947d750d4bd7a6162a06de3233b
+queue-sha: (none: serial)
+queue-run: (none: serial)
+verdict-run: (none: serial)
+recorded-at: 2026-11-18T03:07:31Z
