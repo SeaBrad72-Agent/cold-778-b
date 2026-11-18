@@ -1,0 +1,13 @@
+record: promotion GO (approve->execute->log)
+approved-sha: 6367c8e97df110514e7562e6cd9557743020e16f
+approved-tree: bbc2a6c00859943c33b27538eeff5c6da7db62c6
+approved-by: cold-778-b [committer]
+go-by: SeaBrad72 [self-asserted]
+gate: design
+rung: integration
+change-class: control-plane
+kit-row: COLD-10
+scope: branch/feature/cold-10-charter-fields
+approval-token: "Go cold-10"
+basis: 6367c8e97df110514e7562e6cd9557743020e16f:docs/architecture/2026-11-17-charter-fields-design.md
+recorded-at: 2026-11-18T01:59:02Z
