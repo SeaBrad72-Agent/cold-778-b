@@ -1,0 +1,13 @@
+record: promotion GO (approve->execute->log)
+approved-sha: 2f21ae93b3a82cc7d8c63965dfcbf8121f67361c
+approved-tree: 18771bb97db4d3cb8dd453473b309a116572e199
+approved-by: SeaBrad72 [authenticated: github-review]
+go-by: SeaBrad72 [self-asserted]
+gate: merge
+rung: integration
+change-class: ordinary
+kit-row: COLD-7
+scope: 5
+approval-token: "Cold-7 approved"
+basis: (none recorded)
+recorded-at: 2026-11-18T02:02:25Z
