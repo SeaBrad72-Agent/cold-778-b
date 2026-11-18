@@ -1,5 +1,5 @@
-// Parent side of the cross-process harness: starts two bump-many.ts children on one SQLite file, waits
-// until BOTH report ready, then releases them together (a real rendezvous).
+// Parent side of the cross-process lost-update harness: starts two bump-many.ts children on one
+// SQLite file, waits until BOTH report ready, then releases them together (a real rendezvous).
 import { spawn } from 'node:child_process';
 import { readdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -11,22 +11,18 @@ const BUMP_MANY = join(ROOT, 'test/helpers/bump-many.ts');
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export type ChildMode = 'store' | 'mutant' | 'churn' | 'dec-refused';
-
-/** Runs two children on `name`, `perChild` iterations each, in the given modes (one mode = both
- * children); resolves to their exit codes. */
+/** Runs two children bumping `name` `perChild` times each; resolves to their exit codes. */
 export async function bumpFromTwoProcesses(
   dbPath: string,
   name: string,
   perChild: number,
-  modes: ChildMode | [ChildMode, ChildMode] = 'store',
+  mode: 'store' | 'mutant' = 'store',
 ): Promise<Array<number | null>> {
   const go = join(dirname(dbPath), `go-${basename(dbPath)}`);
-  const pair = Array.isArray(modes) ? modes : [modes, modes];
-  const exits = pair.map(
-    (mode) =>
+  const args = [...['--import', TSX, BUMP_MANY, dbPath, name, String(perChild), go], ...(mode === 'mutant' ? ['mutant'] : [])];
+  const exits = [0, 1].map(
+    () =>
       new Promise<number | null>((resolve) => {
-        const args = ['--import', TSX, BUMP_MANY, dbPath, name, String(perChild), go, mode];
         spawn(process.execPath, args, { stdio: 'inherit' }).on('exit', resolve);
       }),
   );

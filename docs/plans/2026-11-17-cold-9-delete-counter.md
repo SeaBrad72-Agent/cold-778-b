@@ -32,4 +32,4 @@ Ordinary, size S: short design doc with a one-line lens summary, this plan, the 
 
 ## Verification plan
 
-Before the push: lint, type-check, `npm run test:coverage` (each contract row and control has a test seen failing first where the behaviour is new; ≥80%), build. A green proves the contract and robustness under concurrent delete. It does not prove the transaction's consistency, which is guaranteed by construction and verified by reading (design §Honest ceiling).
+Before the push: lint, type-check, `npm run test:coverage` (each contract row and control has a test seen failing first where the behaviour is new; ≥80%), build. A green proves the contract and, through deterministic tests that fail against the pre-transaction code (a test-only hook at the race window, and a reader-held lock), that a bump's refusal is named from the state its UPDATE met and that a bump never reports an uncommitted success (design §Honest ceiling, revised in review).

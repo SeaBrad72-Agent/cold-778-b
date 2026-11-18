@@ -25,7 +25,7 @@ Span name `DELETE /counters/:name`; headers, logs and request id as on every rou
 ## Shape
 
 - `src/store.ts` gains `delete(name): boolean` (true when a row was removed): one parameterised `DELETE FROM counters WHERE name = ?`.
-- **Carried COLD-6 fix:** `increment`/`decrement` run the guarded `UPDATE … RETURNING` and, when it returns no row, the classifying `SELECT`, inside one `BEGIN IMMEDIATE … COMMIT` (rolled back on any error). No other connection can create or delete the row between the two statements, so the refusal reported is the refusal the UPDATE met. `busy_timeout` (COLD-6) makes a contended `BEGIN IMMEDIATE` wait rather than fail.
+- **Carried COLD-6 fix:** `increment`/`decrement` run the guarded `UPDATE … RETURNING` and, when it returns no row, the classifying `SELECT`, inside one `BEGIN IMMEDIATE … COMMIT` (rolled back on any error). No other connection can create or delete the row between the two statements, so the refusal reported is the refusal the UPDATE met. A contended `BEGIN IMMEDIATE` or `COMMIT` waits up to `busy_timeout` and then **throws**. SQLite's busy wait is not fair, so a rare wait can time out under sustained contention.
 - `src/counters.ts` adds `router.delete('/:name', routeName('/counters/:name'), …)`: the name rule, then the store, then 204 or 404.
 
 ## Test plan (TDD, red first)
@@ -41,7 +41,8 @@ Span name `DELETE /counters/:name`; headers, logs and request id as on every rou
 | A deleted counter is gone from read and list | `test/store.test.ts::deletes an existing counter and it is gone from get and list` |
 | An invalid name never reaches storage on DELETE | `test/counters.test.ts::never calls the store for an invalid delete` |
 | A cross-site browser delete is refused | `test/app.test.ts::refuses a cross-site write with 403 and changes nothing` (DELETE row) |
-| Refused bumps stay well-formed under concurrent delete | `test/store.test.ts::bumps refused during concurrent delete and re-create are clean 404s or 409s` |
+| A bump's refusal is named from the state its UPDATE met (one transaction) | `test/store.test.ts::an increment on a deleted counter is reported not found even if it is re-created mid-bump` |
+| A bump never reports success for a write that did not commit | `test/store.test.ts::a bump whose commit is blocked by a reader fails loudly and changes nothing` |
 
 ## Lens review (S, one line)
 
@@ -49,9 +50,18 @@ lenses: no findings except **security**: a new unauthenticated, destructive writ
 
 ## Honest ceiling
 
-- **No test can see the transaction's consistency from outside.** During a race, both 404 and 409 are plausible answers. That the error check sees the same state as the UPDATE is guaranteed by construction (one `BEGIN IMMEDIATE` transaction), and the reviewer verifies it by reading the code. The concurrency test proves robustness: no crash and no busy error under contention. It does not prove classification. It would pass against the pre-transaction code too, and this document says so rather than claiming otherwise.
+- **What the tests prove (revised in review; the first version of this section was wrong).** The transaction is pinned by three deterministic tests, and each one **fails** against the pre-transaction code (measured):
+  - **Two race tests.** A test-only hook (`betweenUpdateAndClassify`, never set by `server.ts`) runs another connection's write exactly between the UPDATE and the classifying read. With the transaction, that write is blocked. Without it, an increment on a counter re-created mid-bump is misreported as "would exceed the maximum" at 0, and a decrement at 0 on a counter deleted mid-bump is misreported as "not found".
+  - **A lost-write test.** A reader holds a shared lock. Without the transaction, the auto-commit's busy failure was swallowed and the bump answered success for a write that was never stored (security L2, found on `main`).
+- **The hook is a test seam in production code.** It is an option no production caller sets, documented as test-only. It is a deliberate trade for a deterministic test over a timing-based one.
+- **Not proven:** behaviour across processes beyond these single-window races, and SQLite's busy-wait fairness. Under sustained writes from another process, roughly 1 lock wait in 20,000 times out after `busy_timeout` and answers 500 (measured in review; the same rate as on `main`, so not a regression).
 - There is no undo or soft delete: a deleted counter's value is lost.
 
 ## Amendment log
 
 - 2026-11-17: initial design, GO'd by the owner.
+- 2026-11-17, review round 1 (reviewer NEEDS-FIXES; security PASS-WITH-NOTES). **A new test seam**, recorded as a design revision:
+  - **Reviewer I1:** the two-process "robustness" test never had a bump meet a deleted counter (0 of 5,000 not-found, measured by the seat). The Honest ceiling's "both answers are plausible" was false for increment. A first rework that paced the processes was **still flaky** under CPU contention (2 of 20 runs failed, trials of up to 36 s, measured). Both timing-based race tests and their helper modes were removed and replaced by the deterministic hook tests above.
+  - **Security L2:** on `main`, a bump whose auto-commit hit `SQLITE_BUSY` answered success while the value never changed. The transaction fixes it, and a regression test now pins it. `sqliteStore` gains a `busyTimeoutMs` option (default 5000) so the test stays fast.
+  - **Security L1:** the README now warns that opening the port lets anyone change or delete counters, with no undo. **Security L3:** double-encoded names were added to the invalid-name table.
+  - **Reviewer minors:** the rollback test's comment names the measured failure (m1); the busy-wait wording is corrected (m2); the COLD-6 design is amended (m3); there are span tests for DELETE 204, 404 and 400 (m4); and there is an allowed same-origin DELETE row (m5).

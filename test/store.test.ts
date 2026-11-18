@@ -238,6 +238,30 @@ describe('sqliteStore', () => {
       expect(store.create('again')).toEqual({ name: 'again', value: 0 });
     });
 
+    // Security COLD-9 L2: on the pre-transaction code an auto-commit that hit SQLITE_BUSY was swallowed,
+    // so a bump answered success while the stored value never changed. Now the explicit COMMIT throws
+    // and is rolled back. This test FAILS without the transaction (the bump "succeeds" silently).
+    it('a bump whose commit is blocked by a reader fails loudly and changes nothing', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'tally-store-'));
+      dirs.push(dir);
+      const path = join(dir, 'tally.db');
+      const store = sqliteStore(path, { busyTimeoutMs: 50 });
+      open.push(store);
+      store.create('b');
+      const reader = new DatabaseSync(path);
+      reader.exec('BEGIN');
+      reader.prepare('SELECT value FROM counters WHERE name = ?').get('b'); // holds a SHARED lock
+      expect(() => store.increment('b', 1)).toThrow(/database is locked/);
+      reader.exec('COMMIT');
+      reader.close();
+      expect(store.get('b')).toEqual({ name: 'b', value: 0 });
+      expect(store.increment('b', 1)).toEqual({ name: 'b', value: 1 }); // the store is usable again
+    });
+
+    it.each([-1, 1.5, Number.NaN])('refuses a busyTimeoutMs that is not an integer >= 0: %s', (ms) => {
+      expect(() => sqliteStore(':memory:', { busyTimeoutMs: ms })).toThrow(RangeError);
+    });
+
     it('rolls back a bump whose statement fails, so the next bump still works', () => {
       const dir = mkdtempSync(join(tmpdir(), 'tally-store-'));
       dirs.push(dir);
@@ -251,21 +275,69 @@ describe('sqliteStore', () => {
       raw.exec('CREATE TABLE counters (name TEXT PRIMARY KEY NOT NULL, value INTEGER NOT NULL DEFAULT 0)');
       raw.close();
       store.create('x');
-      // Without the rollback this throws "cannot start a transaction within a transaction".
+      // Without the rollback the store's open transaction keeps the write lock, so the CREATE TABLE
+      // above fails with "database is locked" (measured).
       expect(store.increment('x', 1)).toEqual({ name: 'x', value: 1 });
     });
 
-    // Robustness only (design §Honest ceiling): it cannot observe whether the classifying read shares
-    // the bump's transaction, because during a race both 404 and 409 are plausible answers.
-    it('bumps refused during concurrent delete and re-create are clean 404s or 409s', async () => {
+    // Deterministic race tests (COLD-9 review I1). A test-only hook runs between a bump's guarded UPDATE
+    // and the read that names its refusal; from there another connection tries to change the row. With
+    // the transaction, that write is blocked (the bump holds the write lock), so the refusal is the one
+    // the UPDATE met. Without it, the write lands and the refusal is misnamed. Timing-based two-process
+    // versions of these tests were flaky under CPU contention (2 failures in 20, measured) and are gone.
+    const raced = (setup: (store: CounterStore) => void, interloper: (raw: DatabaseSync) => void) => {
       const dir = mkdtempSync(join(tmpdir(), 'tally-store-'));
       dirs.push(dir);
       const path = join(dir, 'tally.db');
-      const setup = sqliteStore(path);
-      setup.create('flicker');
-      setup.close();
-      expect(await bumpFromTwoProcesses(path, 'flicker', 1000, ['dec-refused', 'churn'])).toEqual([0, 0]);
-    }, 30_000);
+      const outcomes: string[] = [];
+      const raw = new DatabaseSync(path, { timeout: 0 });
+      const store = sqliteStore(path, {
+        busyTimeoutMs: 50,
+        betweenUpdateAndClassify: () => {
+          try {
+            interloper(raw);
+            outcomes.push('interloper wrote');
+          } catch (err) {
+            outcomes.push(`interloper blocked: ${(err as Error).message}`);
+          }
+        },
+      });
+      open.push(store);
+      setup(store);
+      return { store, raw, outcomes };
+    };
+
+    it('an increment on a deleted counter is reported not found even if it is re-created mid-bump', () => {
+      const { store, raw, outcomes } = raced(
+        () => {},
+        (db) => db.prepare('INSERT INTO counters (name, value) VALUES (?, 0)').run('ghost'),
+      );
+      expect(() => store.increment('ghost', 1)).toThrow(CounterNotFoundError);
+      expect(outcomes).toEqual(['interloper blocked: database is locked']);
+      raw.close();
+    });
+
+    it('a decrement at zero is reported as the bound even if the counter is deleted mid-bump', () => {
+      const { store, raw, outcomes } = raced(
+        (s) => s.create('zero'),
+        (db) => db.prepare('DELETE FROM counters WHERE name = ?').run('zero'),
+      );
+      expect(() => store.decrement('zero', 1)).toThrow(CounterBoundError);
+      expect(outcomes).toEqual(['interloper blocked: database is locked']);
+      expect(store.get('zero')).toEqual({ name: 'zero', value: 0 });
+      raw.close();
+    });
+
+    it('the hook runs only when a bump is refused', () => {
+      let calls = 0;
+      const store = sqliteStore(':memory:', { betweenUpdateAndClassify: () => calls++ });
+      open.push(store);
+      store.create('ok');
+      store.increment('ok', 1);
+      expect(calls).toBe(0);
+      expect(() => store.decrement('ok', 5)).toThrow(CounterBoundError);
+      expect(calls).toBe(1);
+    });
   });
 
   it('passes through an unexpected database error instead of reporting a duplicate', () => {

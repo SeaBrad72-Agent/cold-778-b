@@ -386,6 +386,8 @@ describe('counters API', () => {
       ['an encoded newline', 'abc%0A'],
       ['SQL metacharacters', "x'%20OR%201=1--"],
       ['a malformed percent-encoding', '%E0%A4%A'],
+      ['a double-encoded name', '%2563offee'],
+      ['a double-encoded slash', 'a%252Fb'],
     ];
     it.each(invalidDeleteNames)('answers 400 for an invalid name: %s', async (_label, name) => {
       const res = await request(app).delete(`/counters/${name}`);

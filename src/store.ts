@@ -67,11 +67,26 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
-export function sqliteStore(path: string): CounterStore {
+export interface StoreOptions {
+  /** How long to wait for another connection's lock before failing with "database is locked"
+   * (default 5000 ms). Tests lower it to stay fast. */
+  busyTimeoutMs?: number;
+  /** TEST-ONLY seam: called inside a refused bump's transaction, after the guarded UPDATE and before the
+   * read that names the refusal. Tests use it to race another connection against that exact window,
+   * deterministically (timing-based two-process versions were flaky; COLD-9 review). Never set in
+   * production code: server.ts does not pass it. */
+  betweenUpdateAndClassify?: (name: string) => void;
+}
+
+export function sqliteStore(path: string, options: StoreOptions = {}): CounterStore {
   const db = new DatabaseSync(path);
-  // Another connection holding the write lock makes this one WAIT (up to 5 s) rather than fail with
-  // SQLITE_BUSY: measured, two processes bumping one file crash with "database is locked" without it.
-  db.exec('PRAGMA busy_timeout = 5000');
+  // Another connection holding a lock makes this one wait, up to busyTimeoutMs, and then fail with
+  // SQLITE_BUSY ("database is locked"); SQLite's busy wait is not fair, so under sustained writes from
+  // another process a rare wait can still time out (measured, COLD-9 review). Without any timeout, two
+  // processes bumping one file crash on the first contention (measured, COLD-6).
+  const busyTimeoutMs = options.busyTimeoutMs ?? 5000;
+  if (!Number.isInteger(busyTimeoutMs) || busyTimeoutMs < 0) throw new RangeError('busyTimeoutMs must be an integer >= 0');
+  db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
   db.exec(
     'CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY NOT NULL, value INTEGER NOT NULL DEFAULT 0)',
   );
@@ -90,8 +105,10 @@ export function sqliteStore(path: string): CounterStore {
   // One bump: the guarded UPDATE and, when it returns no row, the read that names the refusal, run in
   // ONE write transaction (COLD-9, closing the COLD-6 carried item). With delete in the API, another
   // connection could otherwise delete or create the row between the two statements and the refusal
-  // reported would not be the one the UPDATE met. BEGIN IMMEDIATE takes the write lock up front;
-  // busy_timeout makes a contended BEGIN wait instead of failing.
+  // reported would not be the one the UPDATE met. BEGIN IMMEDIATE takes the write lock up front; a
+  // contended BEGIN or COMMIT waits up to busy_timeout and then THROWS (rolled back below), so a bump
+  // never answers success for a write that did not commit (COLD-9 security L2: the old auto-commit
+  // swallowed a busy COMMIT and reported a success that was never stored).
   const bump = (
     stmt: typeof up,
     name: string,
@@ -102,6 +119,7 @@ export function sqliteStore(path: string): CounterStore {
     db.exec('BEGIN IMMEDIATE');
     try {
       const row = stmt.get(by, name, guard) as { value: number } | undefined;
+      if (!row) options.betweenUpdateAndClassify?.(name);
       const exists = row !== undefined || select.get(name) !== undefined;
       db.exec('COMMIT');
       if (row) return { name, value: Number(row.value) };
