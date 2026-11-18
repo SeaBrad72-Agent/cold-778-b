@@ -3,7 +3,10 @@ import request from 'supertest';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createServer } from 'node:http';
+import { connect, type AddressInfo } from 'node:net';
 import { createApp } from '../src/app.js';
+import { LOOPBACK_HOSTS } from '../src/config.js';
 import { sqliteStore } from '../src/store.js';
 import { failingStore } from './fakes.js';
 
@@ -13,6 +16,119 @@ describe('app', () => {
     vi.restoreAllMocks();
     delete process.env.OTEL_TRACE_FILE;
     for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  });
+
+  describe('Host allowlist (COLD-7)', () => {
+    const seeded = () => {
+      const store = sqliteStore(':memory:');
+      store.create('coffee');
+      store.increment('coffee', 3);
+      return store;
+    };
+
+    // Every route and method, with a Host that is not allowed: refused before any route, nothing changed.
+    it.each([
+      ['a rebound domain', 'evil.example'],
+      ['a rebound domain with a port', 'evil.example:3000'],
+      ['an unlisted IP', '192.168.1.99:3000'],
+      ['a loopback look-alike', '127.0.0.2:3000'],
+      ['a loopback name with a trailing dot', 'localhost.:3000'],
+      ['an empty Host', ''],
+      // Strict grammar: shapes a URL parser would "normalise" into an allowed name are refused.
+      ['userinfo before a loopback name', 'evil@localhost:3000'],
+      ['a path after the host', 'localhost/x'],
+      ['a non-numeric port', 'localhost:abc'],
+      ['two hosts joined', 'localhost, evil.example'],
+    ])('refuses a request whose Host is not allowed with 421 and changes nothing: %s', async (_label, host) => {
+      const store = seeded();
+      const app = createApp(store);
+      const requests = [
+        request(app).get('/counters/coffee'),
+        request(app).get('/counters'),
+        request(app).get('/healthz'),
+        request(app).post('/counters').send({ name: 'x' }),
+        request(app).post('/counters/coffee/decrement'),
+        request(app).delete('/counters/coffee'),
+      ];
+      for (const req of requests) {
+        const res = await req.set('Host', host);
+        expect(res.status).toBe(421);
+        expect(res.body).toEqual({ error: 'host not allowed' });
+        expect(res.headers['x-content-type-options']).toBe('nosniff');
+      }
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 3 });
+      expect(store.get('x')).toBeUndefined();
+    });
+
+    it('refuses DNS rebinding even with no Origin header (an old browser)', async () => {
+      const store = seeded();
+      const res = await request(createApp(store)).post('/counters/coffee/decrement').set('Host', 'evil.example:3000');
+      expect(res.status).toBe(421);
+      expect(store.get('coffee')).toEqual({ name: 'coffee', value: 3 });
+    });
+
+    // Node itself answers an HTTP/1.1 request without Host with 400 before tally sees it; an HTTP/1.0
+    // request may omit Host and reaches the app, which must refuse it. Sent over a raw socket.
+    it.each([
+      ['HTTP/1.0 with no Host', 'GET /counters HTTP/1.0\r\n\r\n', 421],
+      ['HTTP/1.1 with no Host (refused by Node)', 'GET /counters HTTP/1.1\r\nConnection: close\r\n\r\n', 400],
+      // Security COLD-7 Low-1: RFC 9112 forbids two Host fields; Node keeps the first, so refuse both orders.
+      ['two Host headers, loopback first', 'GET /counters HTTP/1.1\r\nHost: localhost\r\nHost: evil.example\r\nConnection: close\r\n\r\n', 421],
+      ['two Host headers, foreign first', 'GET /counters HTTP/1.1\r\nHost: evil.example\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
+      // Security COLD-7 Low-2: an absolute-form target's authority overrides Host (RFC 9112 §3.2.2).
+      ['an absolute-form target naming another host', 'GET http://evil.example/counters HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
+      ['an absolute-form target naming loopback', 'GET http://localhost/counters HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
+      // The asterisk-form target is legitimate for OPTIONS only (both seats, PR #5 round 2).
+      ['an asterisk target on GET', 'GET * HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
+      ['an asterisk target on OPTIONS passes the Host check', 'OPTIONS * HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 404],
+    ])('refuses a request with a missing or ambiguous Host: %s', async (_label, raw, expected) => {
+      const server = createServer(createApp(seeded()));
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const { port } = server.address() as AddressInfo;
+      try {
+        const reply = await new Promise<string>((resolve, reject) => {
+          let data = '';
+          const socket = connect(port, '127.0.0.1', () => socket.end(raw));
+          socket.on('data', (d) => (data += String(d)));
+          socket.on('end', () => resolve(data));
+          socket.on('error', reject);
+        });
+        const statusLine = reply.split('\r\n')[0];
+        expect(statusLine).toMatch(/^HTTP\/1\.[01] \d{3} /);
+        expect(Number(statusLine.split(' ')[1])).toBe(expected);
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it.each([
+      ['localhost without a port', 'localhost'],
+      ['localhost with a port', 'localhost:3000'],
+      ['127.0.0.1 with a port', '127.0.0.1:3000'],
+      ['IPv6 loopback', '[::1]:3000'],
+      ['uppercase LOCALHOST', 'LOCALHOST:3000'],
+    ])('serves a loopback Host: %s', async (_label, host) => {
+      const res = await request(createApp(seeded())).get('/counters/coffee').set('Host', host);
+      expect(res.status).toBe(200);
+    });
+
+    it('serves a host on the configured allowlist, case-insensitively and on any port', async () => {
+      const app = createApp(seeded(), { allowedHosts: [...LOOPBACK_HOSTS, 'tally.lan', '[fe80::1]'] });
+      expect((await request(app).get('/counters/coffee').set('Host', 'Tally.LAN:8080')).status).toBe(200);
+      expect((await request(app).get('/counters/coffee').set('Host', 'tally.lan')).status).toBe(200);
+      expect((await request(app).get('/counters/coffee').set('Host', '[FE80::1]:3000')).status).toBe(200);
+      expect((await request(app).get('/counters/coffee').set('Host', 'other.lan')).status).toBe(421);
+    });
+
+    it('names the refused request in its span', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'tally-otel-'));
+      dirs.push(dir);
+      const file = join(dir, 'spans.jsonl');
+      process.env.OTEL_TRACE_FILE = file;
+      vi.spyOn(console, 'log').mockImplementation(() => {});
+      await request(createApp(seeded())).get('/counters').set('Host', 'evil.example');
+      expect(JSON.parse(readFileSync(file, 'utf8').trim()).name).toBe('GET host-refused');
+    });
   });
 
   describe('cross-site write refusal (COLD-6 security M1, owner decision 2026-11-17)', () => {
@@ -29,7 +145,10 @@ describe('app', () => {
       ['Sec-Fetch-Site: same-site', { 'Sec-Fetch-Site': 'same-site' }],
       ['a foreign Origin', { Origin: 'https://evil.example' }],
       ['an opaque Origin (sandboxed page)', { Origin: 'null' }],
-      ['DNS rebinding: Origin equals Host but is not loopback', { Origin: 'http://evil.example:3000', Host: 'evil.example:3000' }],
+      // Origin equals Host but is not loopback. A rebound domain is now refused earlier, by the Host
+      // allowlist (421, COLD-7), so this row uses an ALLOWED network host to keep the guard's own
+      // loopback-Origin rule tested: a page served from tally.lan still cannot write.
+      ['an allowed network host as both Origin and Host', { Origin: 'http://tally.lan:3000', Host: 'tally.lan:3000' }],
       ['a loopback Origin on another port', { Origin: 'http://localhost:9999', Host: 'localhost:3000' }],
       // Refuse unless known (security round 2, L3): any Sec-Fetch-Site other than same-origin or none.
       ['an unknown Sec-Fetch-Site value', { 'Sec-Fetch-Site': 'cross-site-ish' }],
@@ -37,7 +156,7 @@ describe('app', () => {
       ['two Sec-Fetch-Site values joined', { 'Sec-Fetch-Site': 'same-origin, cross-site' }],
     ])('refuses a cross-site write with 403 and changes nothing: %s', async (_label, headers) => {
       const store = seeded();
-      const app = createApp(store);
+      const app = createApp(store, { allowedHosts: [...LOOPBACK_HOSTS, 'tally.lan'] });
       for (const path of ['/counters/coffee/decrement', '/counters/coffee/increment']) {
         const res = await request(app).post(path).set(headers as Record<string, string>);
         expect(res.status).toBe(403);
