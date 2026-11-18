@@ -1,0 +1,62 @@
+import { describe, expect, it } from 'vitest';
+import { ConfigError, LOOPBACK_HOSTS, allowedHostsFrom, parseAllowedHosts } from '../src/config.js';
+
+describe('parseAllowedHosts', () => {
+  it('returns an empty list for an unset or blank value', () => {
+    expect(parseAllowedHosts(undefined)).toEqual([]);
+    expect(parseAllowedHosts('')).toEqual([]);
+    expect(parseAllowedHosts('   ')).toEqual([]);
+  });
+
+  it('parses names, IPv4 and bracketed IPv6, lowercased and trimmed', () => {
+    expect(parseAllowedHosts(' Tally.LAN , 192.168.1.20,[fe80::1],box ')).toEqual([
+      'tally.lan',
+      '192.168.1.20',
+      '[fe80::1]',
+      'box',
+    ]);
+  });
+
+  it.each([
+    ['a scheme', 'http://tally.lan'],
+    ['a path', 'tally.lan/x'],
+    ['a port', 'tally.lan:3000'],
+    ['whitespace inside', 'tally lan'],
+    ['an empty item', 'tally.lan,,box'],
+    ['a trailing comma', 'tally.lan,'],
+    ['a wildcard', '*.lan'],
+    ['userinfo', 'me@tally.lan'],
+    ['an unbracketed IPv6', 'fe80::1'],
+    ['a leading hyphen', '-tally.lan'],
+    ['a too-long label', `${'a'.repeat(64)}.lan`],
+  ])('refuses a malformed allowed-hosts entry: %s', (_label, value) => {
+    expect(() => parseAllowedHosts(value)).toThrow(ConfigError);
+    expect(() => parseAllowedHosts(value)).toThrow(/TALLY_ALLOWED_HOSTS/);
+  });
+});
+
+describe('allowedHostsFrom', () => {
+  it('always allows the loopback names', () => {
+    expect(allowedHostsFrom({})).toEqual([...LOOPBACK_HOSTS]);
+    expect(LOOPBACK_HOSTS).toEqual(['localhost', '127.0.0.1', '[::1]']);
+  });
+
+  it('adds the TALLY_ALLOWED_HOSTS entries', () => {
+    expect(allowedHostsFrom({ TALLY_ALLOWED_HOSTS: 'tally.lan' })).toEqual([...LOOPBACK_HOSTS, 'tally.lan']);
+  });
+
+  it('adds a specific TALLY_HOST, but not a wildcard', () => {
+    expect(allowedHostsFrom({ TALLY_HOST: '192.168.1.20' })).toEqual([...LOOPBACK_HOSTS, '192.168.1.20']);
+    expect(allowedHostsFrom({ TALLY_HOST: '0.0.0.0' })).toEqual([...LOOPBACK_HOSTS]);
+    expect(allowedHostsFrom({ TALLY_HOST: '::' })).toEqual([...LOOPBACK_HOSTS]);
+    expect(allowedHostsFrom({ TALLY_HOST: '127.0.0.1' })).toEqual([...LOOPBACK_HOSTS]);
+  });
+
+  it('brackets a specific IPv6 TALLY_HOST to match the Host header form', () => {
+    expect(allowedHostsFrom({ TALLY_HOST: 'fe80::1' })).toEqual([...LOOPBACK_HOSTS, '[fe80::1]']);
+  });
+
+  it('propagates a malformed list as a ConfigError', () => {
+    expect(() => allowedHostsFrom({ TALLY_ALLOWED_HOSTS: 'http://x' })).toThrow(ConfigError);
+  });
+});
