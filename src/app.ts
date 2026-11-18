@@ -11,6 +11,7 @@ import express, {
 } from 'express';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
+import querystring from 'node:querystring';
 import { health } from './health.js';
 import { isEnabled } from './flags.js';
 import type { CounterStore } from './store.js';
@@ -195,6 +196,10 @@ const refuseCrossSiteWrites: RequestHandler = (req, res, next) => {
 export function createApp(store: CounterStore): Express {
   const app = express();
   app.disable('x-powered-by');
+  // Parse the query with no key cap. Node's default keeps only the first 1000 pairs and silently drops
+  // the rest, so `?&&&…&limit=5000` would slip a parameter past the strict list schema (COLD-8
+  // security L1). Node's 16 kB header limit still bounds the query.
+  app.set('query parser', (s: string) => querystring.parse(s, '&', '=', { maxKeys: 0 }));
   const metrics = createMetrics();
   app.use(telemetry(metrics));
   app.use(refuseCrossSiteWrites);

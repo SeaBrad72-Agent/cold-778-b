@@ -17,7 +17,16 @@ export interface CounterStore {
   increment(name: string, by: number): Counter;
   /** Subtract `by` (>= 1) atomically. Throws CounterNotFoundError, or CounterBoundError below zero. */
   decrement(name: string, by: number): Counter;
+  /** Up to `limit` (an integer >= 1; RangeError otherwise) counters whose name sorts after `after`, by
+   * name; `next` is set when more follow. */
+  list(after: string | undefined, limit: number): CounterPage;
   close(): void;
+}
+
+export interface CounterPage {
+  counters: Counter[];
+  /** The last name on this page, present only when more counters follow it. */
+  next?: string;
 }
 
 /** The largest value a counter may hold: beyond it a JS number can no longer represent every integer. */
@@ -70,6 +79,9 @@ export function sqliteStore(path: string): CounterStore {
   // concurrent bumps never lose an update and a refused bump changes nothing.
   const up = db.prepare('UPDATE counters SET value = value + ? WHERE name = ? AND value <= ? RETURNING value');
   const down = db.prepare('UPDATE counters SET value = value - ? WHERE name = ? AND value >= ? RETURNING value');
+  // One page by name; the primary key's index serves the range and the order. Fetches limit + 1 rows:
+  // the extra row only tells whether another page follows.
+  const page = db.prepare('SELECT name, value FROM counters WHERE name > ? ORDER BY name LIMIT ?');
 
   // No row came back: the counter is missing, or the bound held. This read only names the error.
   const refused = (name: string, bound: 'zero' | 'max'): never => {
@@ -100,6 +112,13 @@ export function sqliteStore(path: string): CounterStore {
       const row = down.get(by, name, by) as { value: number } | undefined;
       if (!row) return refused(name, 'zero');
       return { name, value: Number(row.value) };
+    },
+    list(after, limit) {
+      // SQLite reads a negative LIMIT as "no limit", so the store guards its own precondition.
+      if (!Number.isInteger(limit) || limit < 1) throw new RangeError('limit must be an integer >= 1');
+      const rows = page.all(after ?? '', limit + 1) as Array<{ name: string; value: number }>;
+      const counters = rows.slice(0, limit).map((r) => ({ name: r.name, value: Number(r.value) }));
+      return rows.length > limit ? { counters, next: counters[counters.length - 1].name } : { counters };
     },
     close() {
       db.close();

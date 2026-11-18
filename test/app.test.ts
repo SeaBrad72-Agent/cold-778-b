@@ -193,12 +193,14 @@ describe('app', () => {
     await request(app).get('/counters/boom');
     await request(app).post('/counters/boom/increment');
     await request(app).post('/counters/boom/decrement').send({ by: 2 });
+    await request(app).get('/counters?limit=5');
     const spans = readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     expect(spans.map((s) => [s.name, s.status.code])).toEqual([
       ['POST /counters', 'ERROR'],
       ['GET /counters/:name', 'ERROR'],
       ['POST /counters/:name/increment', 'ERROR'],
       ['POST /counters/:name/decrement', 'ERROR'],
+      ['GET /counters', 'ERROR'],
     ]);
   });
 
