@@ -38,7 +38,7 @@ Writes from a web page on another site are refused (`403 cross-site request refu
 | Variable | Default | What it does |
 |---|---|---|
 | `PORT` | `3000` | The port to listen on. |
-| `TALLY_HOST` | `127.0.0.1` | The interface to listen on. The counter API has no login, so the default is this machine only; set `0.0.0.0` (for example in a container) to open it to the network on purpose. Anyone who can then reach it can change or delete any counter, and a delete cannot be undone. |
+| `TALLY_HOST` | `127.0.0.1` | The interface to listen on. The counter API has no login, so the default is this machine only; set `0.0.0.0` (for example in a container) to open it to the network on purpose. Anyone who can then reach it can change or delete any counter, and a delete cannot be undone. A malformed value stops tally at startup. |
 | `TALLY_ALLOWED_HOSTS` | (none) | Extra host names or IPs clients may use to reach tally, comma-separated, e.g. `tally.lan,192.168.1.20` (IPv6 in brackets). `localhost`, `127.0.0.1` and `[::1]` are always allowed, and so is a specific `TALLY_HOST`. Any other `Host` gets `421 host not allowed`, which blocks DNS-rebinding attacks from web pages. A malformed entry stops tally at startup. When you open tally to the network, list the names people will use here. |
 | `TALLY_DB_PATH` | `./data/tally.db` | The SQLite file that holds the counters. Its folder is created if missing; `/data/` is gitignored. An empty value falls back to the default. |
 

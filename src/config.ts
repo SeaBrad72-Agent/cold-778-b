@@ -52,7 +52,14 @@ function bindAsHost(raw: string): string | undefined {
     throw new ConfigError(`TALLY_HOST: "${raw.trim()}" is not a host name or IP address`);
   }
   // Normalise numeric forms (`0`, `::0`, `0:0:0:0:0:0:0:0`) to spot every spelling of all-interfaces.
-  const normalised = new URL(`http://${host}`).hostname;
+  // A value the name grammar admits but the URL parser rejects (`256.1.1.1`, `1.2.3.4.5`) is malformed
+  // too: it gets the named ConfigError, not a raw TypeError (PR #5 security round 2, Low-A).
+  let normalised: string;
+  try {
+    normalised = new URL(`http://${host}`).hostname;
+  } catch {
+    throw new ConfigError(`TALLY_HOST: "${raw.trim()}" is not a host name or IP address`);
+  }
   if (normalised === '0.0.0.0' || normalised === '[::]') return undefined;
   return host;
 }

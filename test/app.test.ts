@@ -78,6 +78,9 @@ describe('app', () => {
       // Security COLD-7 Low-2: an absolute-form target's authority overrides Host (RFC 9112 §3.2.2).
       ['an absolute-form target naming another host', 'GET http://evil.example/counters HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
       ['an absolute-form target naming loopback', 'GET http://localhost/counters HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
+      // The asterisk-form target is legitimate for OPTIONS only (both seats, PR #5 round 2).
+      ['an asterisk target on GET', 'GET * HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
+      ['an asterisk target on OPTIONS passes the Host check', 'OPTIONS * HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 404],
     ])('refuses a request with a missing or ambiguous Host: %s', async (_label, raw, expected) => {
       const server = createServer(createApp(seeded()));
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

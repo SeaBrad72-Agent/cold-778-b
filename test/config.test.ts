@@ -74,6 +74,10 @@ describe('allowedHostsFrom', () => {
     ['a wildcard', '*'],
     ['a zone id', 'fe80::1%eth0'],
     ['a scheme', 'http://box'],
+    // Security PR #5 round 2, Low-A: these pass the name grammar but are not valid addresses; they must
+    // stop startup with the named ConfigError, not a raw TypeError from the URL parser.
+    ['an out-of-range IPv4 octet', '256.1.1.1'],
+    ['five IPv4 parts', '1.2.3.4.5'],
   ])('refuses a malformed TALLY_HOST: %s', (_label, bind) => {
     expect(() => allowedHostsFrom({ TALLY_HOST: bind })).toThrow(ConfigError);
     expect(() => allowedHostsFrom({ TALLY_HOST: bind })).toThrow(/TALLY_HOST/);
