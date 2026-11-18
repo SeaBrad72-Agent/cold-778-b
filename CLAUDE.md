@@ -68,7 +68,7 @@ This file holds only what is **specific to this project**.
 - **Framework(s):** Express 5
 - **Data store:** SQLite through Node's built-in `node:sqlite` (file at `TALLY_DB_PATH`, default `./data/tally.db`)
 - **Testing:** Vitest + supertest; coverage gate ≥ 80% (`npm run test:coverage`)
-- **Deploy target / hosting:** none — deployment to production is out of scope (§1)
+- **Deploy target / hosting:** none chosen — deployment to production is out of scope (§1); ADR-000 leaves the choice open
 - **Key libraries / services:** express, zod (input validation); Jira (COLD) as the board
 
 ## 3. Per-project process configuration
@@ -86,7 +86,7 @@ This file holds only what is **specific to this project**.
 - **Operator fluency** (§onboarding): [Novice / Adjacent / Practitioner] — the human operator's enterprise-SDLC experience; the agent adapts its assistance accordingly (the "New to enterprise SDLC?" section of `START-HERE.md`; behaviour in `docs/operations/operator-fluency.md`).
 - **Process mode** (§ ceremony): lean — how much ceremony incept scaffolds + surfaces (ceremony only; solo-vs-team governance is the separate `enforce_admins` / `docs/operations/review-lane.md` axis). Does **not** change which controls are ENFORCED: every gate keys on its detected trigger (Dockerfile, `evals/`, data surface, classification), never on this field.
 - **Governance** (§ solo/team): team — solo = one account: the declaring merge is the owner's, and from then on the agent merges on the owner's recorded GO (`enforce_admins:false` until `branch-protection-apply.sh --replace` writes the solo-agent profile); team = non-author approval + second-reviewer SoD (`enforce_admins:true`). Enforced server-side (branch protection), not by this field; this records the fork chosen at Inception (`docs/operations/review-lane.md`).
-- **Branch protection** (§branch-protection): github-verified — team profile (`enforce_admins:true`, one non-author approval, stale approvals dismissed, last-push approval), six required checks; verified live by `conformance/inception-done.sh --strict` on 2026-11-17 — how `main` is protected. GitHub is **verified live** at Inception-Done (`conformance/inception-done.sh`); other hosts the kit can't yet query require this **attestation** (`docs/adoption/vc-hosts.md`). Fill deliberately — do not auto-stamp.
+- **Branch protection** (§branch-protection): github-verified — the kit's team profile (`scripts/branch-protection-apply.sh --replace --team`: `enforce_admins:true`, one non-author approval, stale approvals dismissed, last-push approval, code-owner reviews required though `.github/CODEOWNERS` has no rules yet) and the required checks in `REQUIRED-CHECKS.md`. Verified live by `conformance/inception-done.sh --strict` on 2026-11-17; that run, not this line, is the source of truth — re-run it to check the current state — how `main` is protected. GitHub is **verified live** at Inception-Done (`conformance/inception-done.sh`); other hosts the kit can't yet query require this **attestation** (`docs/adoption/vc-hosts.md`). Fill deliberately — do not auto-stamp.
 - **Target harness(es)** (§harness-neutrality): claude-code — the LLM/agent harness(es) this project runs; each is verified against the boundary contract at Inception (`docs/operations/harness-adapters.md`). Record *why* this harness fits in the Harness fit rationale field below.
 - **Review routing / ownership** (§11): [who/which agent reviews what; CODEOWNERS link]
 - **WIP limits:** [per-stage or global cap]
@@ -117,7 +117,7 @@ claude-code fits by two dimensions this project measurably uses. **Native hooks:
 |----------|----------|
 | Intent owner | @SeaBrad72 |
 | Lead / integrator | @SeaBrad72 — gives every merge GO; the agent actuates (`actuate`, or `land` for control-plane) |
-| Builder(s) | the conductor agent (a Claude Code session; forge account SeaBrad72-Agent, push only) |
+| Builder(s) | the conductor agent (a Claude Code session; forge account SeaBrad72-Agent: write access, not admin — pushes feature branches and actuates merges only on @SeaBrad72's recorded GO; it cannot approve its own PRs) |
 | Reviewer(s) | the `reviewer` and `security` seats (`agents/*.agent.md`, fresh contexts), plus @SeaBrad72's non-author Approve on every PR |
 | On-call / operator | n/a — no deployment (§1) |
 | Security owner | @SeaBrad72 |

@@ -57,3 +57,8 @@ The checks prove the entry contract is untouched and the fit rationale has the r
 ## Amendment log
 
 - 2026-11-17: initial design, GO'd by the owner ("Go cold-10").
+- 2026-11-17, review round 1 (reviewer APPROVE with 3 Minors; security PASS-WITH-NOTES with 2 Lows). Accuracy corrections only, no new mechanism and no new field:
+  - The agent account's scope is stated as it is: write access, not admin; it actuates merges on the owner's recorded GO and cannot approve its own PRs (security L1: "push only" understated it).
+  - The branch-protection line names the source of each fact: the team profile from `branch-protection-apply.sh --team`, including code-owner reviews with an empty CODEOWNERS; the checks from `REQUIRED-CHECKS.md`; and `inception-done --strict` as the point-in-time source of truth (security L2).
+  - "Deploy target: none chosen", because ADR-000 leaves it open (reviewer M3).
+  - **Carried, not done here:** the stale "Owed from Inception" list and the header's `Status: Inception` (reviewer M1, M2) are outside this design's GO'd scope, so they are carried on a new card.
