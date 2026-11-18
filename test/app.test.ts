@@ -72,7 +72,13 @@ describe('app', () => {
     it.each([
       ['HTTP/1.0 with no Host', 'GET /counters HTTP/1.0\r\n\r\n', 421],
       ['HTTP/1.1 with no Host (refused by Node)', 'GET /counters HTTP/1.1\r\nConnection: close\r\n\r\n', 400],
-    ])('refuses a request with no Host header: %s', async (_label, raw, expected) => {
+      // Security COLD-7 Low-1: RFC 9112 forbids two Host fields; Node keeps the first, so refuse both orders.
+      ['two Host headers, loopback first', 'GET /counters HTTP/1.1\r\nHost: localhost\r\nHost: evil.example\r\nConnection: close\r\n\r\n', 421],
+      ['two Host headers, foreign first', 'GET /counters HTTP/1.1\r\nHost: evil.example\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
+      // Security COLD-7 Low-2: an absolute-form target's authority overrides Host (RFC 9112 §3.2.2).
+      ['an absolute-form target naming another host', 'GET http://evil.example/counters HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
+      ['an absolute-form target naming loopback', 'GET http://localhost/counters HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n', 421],
+    ])('refuses a request with a missing or ambiguous Host: %s', async (_label, raw, expected) => {
       const server = createServer(createApp(seeded()));
       await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
       const { port } = server.address() as AddressInfo;

@@ -37,7 +37,8 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   // Loopback by default: POST /counters is an unauthenticated write (auth is out of scope by charter),
   // so listening beyond this machine is an explicit opt-in (TALLY_HOST=0.0.0.0, for example in a container).
   // Not `HOST`: csh/tcsh and some CI images export HOST as the machine's hostname.
-  const host = process.env.TALLY_HOST || '127.0.0.1';
+  // Trimmed exactly as the allowlist reads it (src/config.ts), so the bind and the allowed host agree.
+  const host = process.env.TALLY_HOST?.trim() || '127.0.0.1';
   const server = createServer(createApp(store, { allowedHosts }));
   server.listen(port, host, () => console.log(`listening on ${host}:${port}`));
   const shutdown = () => server.close(() => { store.close(); process.exit(0); });

@@ -167,7 +167,8 @@ const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
 // An Origin must also be a LOOPBACK name equal to Host: DNS rebinding makes Origin and Host both read
 // `evil.example`, so "Origin equals Host" alone would let it through.
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
-const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+// The one loopback list (src/config.ts), shared with the Host allowlist so the two controls cannot drift.
+const LOOPBACK_HOSTNAMES = new Set<string>(LOOPBACK_HOSTS);
 
 function isCrossSiteWrite(req: Request): boolean {
   if (SAFE_METHODS.has(req.method)) return false;
@@ -204,11 +205,22 @@ function hostnameOf(header: string | undefined): string | undefined {
   return m ? (m[1] ?? m[2]) : undefined;
 }
 
+// Exactly one Host field (RFC 9112 §3.2; Node keeps only the first of several), and an origin-form
+// target (`/path`). An absolute-form target (`http://other/path`) carries an authority that overrides
+// Host (RFC 9112 §3.2.2), so it is refused rather than half-checked; `*` is allowed for OPTIONS only.
+function hostFieldCount(rawHeaders: string[]): number {
+  let n = 0;
+  for (let i = 0; i < rawHeaders.length; i += 2) if (rawHeaders[i].toLowerCase() === 'host') n++;
+  return n;
+}
+
 function refuseUnknownHosts(allowed: readonly string[]): RequestHandler {
   const set = new Set(allowed.map((h) => h.toLowerCase()));
   return (req, res, next) => {
     const host = hostnameOf(req.headers.host);
-    if (host === undefined || !set.has(host)) {
+    const target = req.originalUrl;
+    const originForm = target.startsWith('/') || (target === '*' && req.method === 'OPTIONS');
+    if (host === undefined || !set.has(host) || hostFieldCount(req.rawHeaders) !== 1 || !originForm) {
       res.locals.route = 'host-refused'; // a fixed span name, so refusals are findable in traces
       res.status(421).json({ error: 'host not allowed' });
       return;

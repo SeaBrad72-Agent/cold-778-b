@@ -54,3 +54,9 @@ The allowlist checks the `Host` header the client sent; it is not authentication
 ## Amendment log
 
 - 2026-11-17: initial design, GO'd by the owner.
+- 2026-11-17, review round 1 (reviewer APPROVE with 3 Minors; security PASS-WITH-NOTES with 5 Lows; hardening, no new mechanism):
+  - A request with **two Host fields** is refused (RFC 9112 §3.2; Node kept the first, so `localhost` then `evil` was served). An **absolute-form** request target (`GET http://other/…`), whose authority overrides Host, is refused. `*` is allowed for OPTIONS only.
+  - **`TALLY_HOST` is validated** with the same grammar as the list (a malformed value stops startup). Every spelling of all-interfaces (`0`, `::0`, `0:0:0:0:0:0:0:0`, as well as `0.0.0.0` and `::`) is recognised after numeric normalisation, and the bind value is trimmed the same way for `listen`.
+  - **IPv6 entries are stored in canonical form** (`[fe80:0:0::1]` becomes `[fe80::1]`, what a browser sends), and a zone id (`%eth0`) is refused, because a Host header cannot carry one and the entry could never match.
+  - The cross-site guard's loopback set is built from the one `LOOPBACK_HOSTS` list, so the two controls cannot drift.
+  - `.env.example` and a RUNBOOK line are carried on **COLD-3** (security Low-5).

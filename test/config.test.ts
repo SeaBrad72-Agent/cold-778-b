@@ -8,6 +8,10 @@ describe('parseAllowedHosts', () => {
     expect(parseAllowedHosts('   ')).toEqual([]);
   });
 
+  it('stores IPv6 entries in canonical form, so they match what a browser sends', () => {
+    expect(parseAllowedHosts('[FE80:0:0::1],[::ffff:7f00:1]')).toEqual(['[fe80::1]', '[::ffff:7f00:1]']);
+  });
+
   it('parses names, IPv4 and bracketed IPv6, lowercased and trimmed', () => {
     expect(parseAllowedHosts(' Tally.LAN , 192.168.1.20,[fe80::1],box ')).toEqual([
       'tally.lan',
@@ -29,6 +33,7 @@ describe('parseAllowedHosts', () => {
     ['an unbracketed IPv6', 'fe80::1'],
     ['a leading hyphen', '-tally.lan'],
     ['a too-long label', `${'a'.repeat(64)}.lan`],
+    ['an IPv6 zone id (can never match a Host header)', '[fe80::1%eth0]'],
   ])('refuses a malformed allowed-hosts entry: %s', (_label, value) => {
     expect(() => parseAllowedHosts(value)).toThrow(ConfigError);
     expect(() => parseAllowedHosts(value)).toThrow(/TALLY_ALLOWED_HOSTS/);
@@ -52,8 +57,26 @@ describe('allowedHostsFrom', () => {
     expect(allowedHostsFrom({ TALLY_HOST: '127.0.0.1' })).toEqual([...LOOPBACK_HOSTS]);
   });
 
-  it('brackets a specific IPv6 TALLY_HOST to match the Host header form', () => {
+  it('brackets and canonicalises a specific IPv6 TALLY_HOST to match the Host header form', () => {
     expect(allowedHostsFrom({ TALLY_HOST: 'fe80::1' })).toEqual([...LOOPBACK_HOSTS, '[fe80::1]']);
+    expect(allowedHostsFrom({ TALLY_HOST: 'FE80:0:0::1' })).toEqual([...LOOPBACK_HOSTS, '[fe80::1]']);
+  });
+
+  it.each(['::0', '0:0:0:0:0:0:0:0', '0', '0.0.0.0', '::'])(
+    'recognises every spelling of an all-interfaces TALLY_HOST: %s',
+    (bind) => {
+      expect(allowedHostsFrom({ TALLY_HOST: bind })).toEqual([...LOOPBACK_HOSTS]);
+    },
+  );
+
+  it.each([
+    ['junk', 'a b'],
+    ['a wildcard', '*'],
+    ['a zone id', 'fe80::1%eth0'],
+    ['a scheme', 'http://box'],
+  ])('refuses a malformed TALLY_HOST: %s', (_label, bind) => {
+    expect(() => allowedHostsFrom({ TALLY_HOST: bind })).toThrow(ConfigError);
+    expect(() => allowedHostsFrom({ TALLY_HOST: bind })).toThrow(/TALLY_HOST/);
   });
 
   it('propagates a malformed list as a ConfigError', () => {
