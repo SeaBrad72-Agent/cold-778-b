@@ -9,5 +9,5 @@ change-class: control-plane
 kit-row: COLD-10
 scope: branch/feature/cold-10-charter-fields
 approval-token: "Go cold-10"
-basis: 6367c8e97df110514e7562e6cd9557743020e16f:docs/architecture/2026-11-17-charter-fields-design.md
-recorded-at: 2026-11-18T01:59:02Z
+basis: docs/architecture/2026-11-17-charter-fields-design.md
+recorded-at: 2026-11-18T02:07:26Z
