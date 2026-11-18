@@ -196,6 +196,78 @@ describe('sqliteStore', () => {
     });
   });
 
+  describe('delete', () => {
+    it('deletes an existing counter and it is gone from get and list', () => {
+      const store = mem();
+      store.create('a');
+      store.create('b');
+      expect(store.delete('a')).toBe(true);
+      expect(store.get('a')).toBeUndefined();
+      expect(store.list(undefined, 10)).toEqual({ counters: [{ name: 'b', value: 0 }] });
+    });
+
+    it('returns false for an unknown counter, and on a second delete', () => {
+      const store = mem();
+      expect(store.delete('nope')).toBe(false);
+      store.create('once');
+      expect(store.delete('once')).toBe(true);
+      expect(store.delete('once')).toBe(false);
+    });
+
+    it('deletes a counter whatever its value', () => {
+      const store = mem();
+      store.create('busy');
+      store.increment('busy', 42);
+      expect(store.delete('busy')).toBe(true);
+      expect(store.get('busy')).toBeUndefined();
+    });
+
+    it('a bump after a delete throws CounterNotFoundError', () => {
+      const store = mem();
+      store.create('gone');
+      store.delete('gone');
+      expect(() => store.increment('gone', 1)).toThrow(CounterNotFoundError);
+      expect(() => store.decrement('gone', 1)).toThrow(CounterNotFoundError);
+    });
+
+    it('a deleted name can be created again, from zero', () => {
+      const store = mem();
+      store.create('again');
+      store.increment('again', 3);
+      store.delete('again');
+      expect(store.create('again')).toEqual({ name: 'again', value: 0 });
+    });
+
+    it('rolls back a bump whose statement fails, so the next bump still works', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'tally-store-'));
+      dirs.push(dir);
+      const path = join(dir, 'tally.db');
+      const store = sqliteStore(path);
+      open.push(store);
+      store.create('x');
+      const raw = new DatabaseSync(path);
+      raw.exec('DROP TABLE counters');
+      expect(() => store.increment('x', 1)).toThrow(/no such table/);
+      raw.exec('CREATE TABLE counters (name TEXT PRIMARY KEY NOT NULL, value INTEGER NOT NULL DEFAULT 0)');
+      raw.close();
+      store.create('x');
+      // Without the rollback this throws "cannot start a transaction within a transaction".
+      expect(store.increment('x', 1)).toEqual({ name: 'x', value: 1 });
+    });
+
+    // Robustness only (design §Honest ceiling): it cannot observe whether the classifying read shares
+    // the bump's transaction, because during a race both 404 and 409 are plausible answers.
+    it('bumps refused during concurrent delete and re-create are clean 404s or 409s', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'tally-store-'));
+      dirs.push(dir);
+      const path = join(dir, 'tally.db');
+      const setup = sqliteStore(path);
+      setup.create('flicker');
+      setup.close();
+      expect(await bumpFromTwoProcesses(path, 'flicker', 1000, ['dec-refused', 'churn'])).toEqual([0, 0]);
+    }, 30_000);
+  });
+
   it('passes through an unexpected database error instead of reporting a duplicate', () => {
     const store = sqliteStore(':memory:');
     store.close();

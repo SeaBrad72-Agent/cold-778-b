@@ -6,7 +6,7 @@ export function failingStore(message: string): CounterStore {
   const fail = (): never => {
     throw new Error(message);
   };
-  return { create: fail, get: fail, increment: fail, decrement: fail, list: fail, close() {} };
+  return { create: fail, get: fail, increment: fail, decrement: fail, delete: fail, list: fail, close() {} };
 }
 
 /** A store that records every data call in `calls` and throws — proves a request never reached storage. */
@@ -22,6 +22,7 @@ export function tripwireStore(calls: string[]): CounterStore {
     get: trip('get'),
     increment: trip('increment'),
     decrement: trip('decrement'),
+    delete: trip('delete'),
     list: trip('list'),
     close() {},
   };
